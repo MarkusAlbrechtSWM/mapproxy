@@ -2404,7 +2404,7 @@ class ServiceConfiguration(ConfigurationBase):
                                 }
                 elif source_name in self.context.caches:
                     # For cache sources, find the underlying WMS sources
-                    cache_sources, cache_auth_configs = self._get_cache_wms_sources_from_layer(source_name)
+                    cache_sources, cache_auth_configs = self._get_cache_wms_sources_for_service(source_name)
                     for url in cache_sources:
                         if url not in source_urls:
                             source_urls.append(url)
@@ -2444,13 +2444,47 @@ class ServiceConfiguration(ConfigurationBase):
                 
         return merged_md
 
-    def _get_cache_wms_sources_from_layer(self, cache_name):
+    def _get_cache_wms_sources_for_service(self, cache_name):
         """
-        Helper method to get WMS sources from cache configurations for service-level metadata.
+        Recursively get WMS source URLs from a cache configuration for service-level metadata.
+        Returns both URLs and auth configurations.
         """
-        return self.context.layers.get(cache_name, type('MockLayer', (), {'_get_cache_wms_sources': lambda x: ([], {})}))._get_cache_wms_sources(cache_name)
+        wms_urls = []
+        auth_configs = {}
+        
+        if cache_name not in self.context.caches:
+            return wms_urls, auth_configs
+            
+        cache_conf = self.context.caches[cache_name]
+        cache_sources = cache_conf.conf.get('sources', [])
+        
+        for source_name in cache_sources:
+            if source_name in self.context.sources:
+                source_conf = self.context.sources[source_name].conf
+                if source_conf.get('type') == 'wms':
+                    req_conf = source_conf.get('req', {})
+                    if 'url' in req_conf:
+                        url = req_conf['url']
+                        wms_urls.append(url)
+                        
+                        # Extract auth credentials from HTTP configuration
+                        http_conf = source_conf.get('http', {})
+                        if 'username' in http_conf and 'password' in http_conf:
+                            auth_configs[url] = {
+                                'username': http_conf['username'],
+                                'password': http_conf['password']
+                            }
+            elif source_name in self.context.caches:
+                # Recursively check nested caches
+                nested_urls, nested_auth_configs = self._get_cache_wms_sources_for_service(source_name)
+                wms_urls.extend(nested_urls)
+                auth_configs.update(nested_auth_configs)
+                
+        return wms_urls, auth_configs
 
     def wms_service(self, conf):
+        from mapproxy.service.wms import WMSServer
+        from mapproxy.request.wms import Version
 
         md = self._merge_service_auto_metadata(conf.get('md', {}))
 
