@@ -32,18 +32,19 @@ sources:
     http:
       username: mapproxy_user
       password: secret_password
-      
-  # WMS source using Authorization header (like Bavaria WMS)
-  bavaria_wms:
+
+  # WMS source requiring header authentication
+  header_auth_wms:
     type: wms
     req:
-      url: https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte
-      layers: flurkarte
+      url: https://api.example.com/cadastral/wms
+      layers: cadastral_parcels_color,cadastral_boundaries
     wms_opts:
-      version: '1.1.1'
+      version: '1.3.0'
     http:
       headers:
-        Authorization: Basic MTFGMjg4ODY6NWM5N2NiOQ==
+        Authorization: Basic dGVzdHVzZXI6dGVzdHBhc3M=
+        X-API-Key: your-api-key-here
       
   # Third WMS source for detailed layer examples
   detailed_wms:
@@ -108,14 +109,13 @@ layers:
       abstract: "Sensitive boundary data requiring authentication"
       auto_metadata: true  # Inherits from secure_wms (with auth)
       
-  # Layer using Bavaria WMS with Authorization header
-  - name: bavarian_cadastre
-    title: Bavarian Cadastral Map
-    sources: [bavaria_wms]  # Direct WMS source with header auth
+  # Layer with source specification for specific layer metadata
+  - name: cadastral_color
+    title: Cadastral Map (Color)
+    sources: ['header_auth_wms:cadastral_parcels_color']  # Extract metadata for specific layer
     md:
-      abstract: "Official cadastral map from Bavaria"
-      auto_metadata: true  # Inherits from bavaria_wms (with header auth)
-    
+      auto_metadata: true  # Inherits from 'cadastral_parcels_color' layer in header_auth_wms
+      
   # Layer with mixed manual and auto metadata from multiple WMS sources
   - name: combined_transport
     title: Combined Transportation Data

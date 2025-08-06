@@ -108,18 +108,18 @@ When using source specifications with specific layer names (format `source_name:
 
 ```yaml
 sources:
-  bavaria_wms:
+  secure_wms:
     type: wms
     req:
-      url: https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte
+      url: https://secure.example.com/wms
     http:
       headers:
-        Authorization: Basic MTFGMjg4ODY6NWM5N2NiOQ==
+        Authorization: Basic dGVzdHVzZXI6dGVzdHBhc3M=
 
 layers:
-  - name: DFK-Color
+  - name: cadastral_map
     title: "Cadastral Map (Color)"  # Manual title
-    sources: ['bavaria_wms:by_alkis_flurkarte_farbe']  # Extract metadata for 'by_alkis_flurkarte_farbe'
+    sources: ['secure_wms:cadastral_parcels_color']  # Extract metadata for 'cadastral_parcels_color'
     md:
       auto_metadata: true  # Inherits from specific WMS layer
 ```
@@ -168,19 +168,19 @@ layers:
 
 ```yaml
 sources:
-  bavaria_wms:
+  secure_cadastral_wms:
     type: wms
     req:
-      url: https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte
-      layers: flurkarte
+      url: https://secure.example.com/cadastral/wms
+      layers: parcels_data
     http:
       headers:
-        Authorization: Basic MTFGMjg4ODY6NWM5N2NiOQ==
+        Authorization: Basic dGVzdHVzZXI6dGVzdHBhc3M=
 
 layers:
   - name: cadastre_layer
     title: "Cadastral Map"
-    sources: [bavaria_wms]
+    sources: [secure_cadastral_wms]
     md:
       auto_metadata: true  # Uses Authorization header to fetch metadata
 ```

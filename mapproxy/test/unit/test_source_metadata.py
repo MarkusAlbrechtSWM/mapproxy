@@ -347,13 +347,13 @@ class TestLayerMetadata:
             }
         }
         
-        # Test with specific layer name 'by_alkis_flurkarte_farbe'
+        # Test with specific layer name 'test_cadastral_layer'
         result = self.manager.get_layer_metadata(
-            'by_alkis_flurkarte_farbe',  # This should match the WMS layer
-            ['https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte'], 
+            'test_cadastral_layer',  # This should match the WMS layer
+            ['https://secure.example.com/wms'], 
             {},
-            {'https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte': {
-                'headers': {'Authorization': 'Basic MTFGMjg4ODY6NWM5N2NiOQ=='}
+            {'https://secure.example.com/wms': {
+                'headers': {'Authorization': 'Basic dGVzdHVzZXI6dGVzdHBhc3M='}
             }}
         )
         
@@ -361,10 +361,10 @@ class TestLayerMetadata:
         assert result['abstract'] == 'ALKIS Flurkarte in Farbe dargestellt'
         
         mock_get_source.assert_called_once_with(
-            'https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte',
+            'https://secure.example.com/wms',
             username=None,
             password=None,
-            headers={'Authorization': 'Basic MTFGMjg4ODY6NWM5N2NiOQ=='}
+            headers={'Authorization': 'Basic dGVzdHVzZXI6dGVzdHBhc3M='}
         )
     
     @patch('mapproxy.source.metadata.wmsparse.parse_capabilities')
@@ -594,7 +594,7 @@ class TestLayerMetadata:
         mock_parse.return_value = mock_service
         
         # Test with headers only
-        headers = {'Authorization': 'Basic MTFGMjg4ODY6NWM5N2NiOQ=='}
+        headers = {'Authorization': 'Basic dGVzdHVzZXI6dGVzdHBhc3M='}
         metadata = self.manager.get_source_metadata('http://example.com/wms', headers=headers)
         
         # Verify HTTPClient was called with headers
