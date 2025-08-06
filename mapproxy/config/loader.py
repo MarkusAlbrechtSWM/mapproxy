@@ -2010,47 +2010,66 @@ class LayerConfiguration(ConfigurationBase):
         if not auto_metadata_enabled:
             return layer_md
             
-        # Get WMS URLs from this layer's sources
-        source_urls = []
-        auth_configs = {}
+        # Get WMS URLs and layer names from this layer's sources
+        source_info = []  # List of (url, layer_name, auth_config) tuples
         layer_sources = self.conf.get('sources', [])
         
-        for source_name in layer_sources:
+        for source_spec in layer_sources:
+            # Parse source specification: 'source_name' or 'source_name:layer_name'
+            if ':' in source_spec:
+                source_name, wms_layer_name = source_spec.split(':', 1)
+            else:
+                source_name = source_spec
+                wms_layer_name = None
+            
             if source_name in self.context.sources:
                 source_conf = self.context.sources[source_name].conf
                 if source_conf.get('type') == 'wms':
                     req_conf = source_conf.get('req', {})
                     if 'url' in req_conf:
                         url = req_conf['url']
-                        source_urls.append(url)
                         
                         # Extract auth credentials from HTTP configuration
                         http_conf = source_conf.get('http', {})
-                        if 'username' in http_conf and 'password' in http_conf:
-                            auth_configs[url] = {
-                                'username': http_conf['username'],
-                                'password': http_conf['password']
-                            }
+                        auth_info = {}
+                        
+                        if "username" in http_conf and "password" in http_conf:
+                            auth_info["username"] = http_conf["username"]
+                            auth_info["password"] = http_conf["password"]
+                            
+                        if "headers" in http_conf:
+                            auth_info["headers"] = http_conf["headers"]
+                            
+                        source_info.append((url, wms_layer_name, auth_info))
+                        
             elif source_name in self.context.caches:
                 # For cache sources, find the underlying WMS sources
                 cache_sources, cache_auth_configs = self._get_cache_wms_sources(source_name)
-                source_urls.extend(cache_sources)
-                auth_configs.update(cache_auth_configs)
+                for cache_url in cache_sources:
+                    auth_config = cache_auth_configs.get(cache_url, {})
+                    source_info.append((cache_url, wms_layer_name, auth_config))
         
-        if not source_urls:
+        if not source_info:
             # No valid WMS sources found, return layer metadata as-is
             return layer_md
             
-        # Use layer name for matching
-        layer_name = self.conf.get('name')
-        if not layer_name:
-            return layer_md
-            
-        # Get auto metadata for this layer
-        auto_metadata = metadata_manager.get_layer_metadata(
-            layer_name, source_urls, layer_md, auth_configs
-        )
+        # Collect auto metadata from all sources
+        auto_metadata = {}
         
+        for url, wms_layer_name, auth_config in source_info:
+            # Use specific WMS layer name if provided, otherwise fall back to MapProxy layer name
+            search_layer_name = wms_layer_name if wms_layer_name else self.conf.get('name')
+            
+            if search_layer_name:
+                layer_metadata = metadata_manager.get_layer_metadata(
+                    search_layer_name, [url], {}, {url: auth_config} if auth_config else {}
+                )
+                
+                # Merge this source's metadata
+                for key, value in layer_metadata.items():
+                    if key not in auto_metadata and value:
+                        auto_metadata[key] = value
+            
         # Create a copy of the layer metadata and merge auto metadata
         merged_md = layer_md.copy()
         
@@ -2090,11 +2109,17 @@ class LayerConfiguration(ConfigurationBase):
                         
                         # Extract auth credentials from HTTP configuration
                         http_conf = source_conf.get('http', {})
-                        if 'username' in http_conf and 'password' in http_conf:
-                            auth_configs[url] = {
-                                'username': http_conf['username'],
-                                'password': http_conf['password']
-                            }
+                        auth_info = {}
+                        
+                        if "username" in http_conf and "password" in http_conf:
+                            auth_info["username"] = http_conf["username"]
+                            auth_info["password"] = http_conf["password"]
+                            
+                        if "headers" in http_conf:
+                            auth_info["headers"] = http_conf["headers"]
+                            
+                        if auth_info:
+                            auth_configs[url] = auth_info
             elif source_name in self.context.caches:
                 # Recursively check nested caches
                 nested_urls, nested_auth_configs = self._get_cache_wms_sources(source_name)
@@ -2395,14 +2420,19 @@ class ServiceConfiguration(ConfigurationBase):
                             if url not in source_urls:
                                 source_urls.append(url)
                                 
-                            # Extract auth credentials from HTTP configuration
-                            http_conf = source_conf.get('http', {})
-                            if 'username' in http_conf and 'password' in http_conf:
-                                auth_configs[url] = {
-                                    'username': http_conf['username'],
-                                    'password': http_conf['password']
-                                }
-                elif source_name in self.context.caches:
+                        # Extract auth credentials from HTTP configuration
+                        http_conf = source_conf.get('http', {})
+                        auth_info = {}
+                        
+                        if "username" in http_conf and "password" in http_conf:
+                            auth_info["username"] = http_conf["username"]
+                            auth_info["password"] = http_conf["password"]
+                            
+                        if "headers" in http_conf:
+                            auth_info["headers"] = http_conf["headers"]
+                            
+                        if auth_info:
+                            auth_configs[url] = auth_info
                     # For cache sources, find the underlying WMS sources
                     cache_sources, cache_auth_configs = self._get_cache_wms_sources_for_service(source_name)
                     for url in cache_sources:
@@ -2421,8 +2451,9 @@ class ServiceConfiguration(ConfigurationBase):
             auth_config = auth_configs.get(source_url, {})
             username = auth_config.get('username')
             password = auth_config.get('password')
+            headers = auth_config.get('headers')
             
-            source_metadata = metadata_manager.get_source_metadata(source_url, username=username, password=password)
+            source_metadata = metadata_manager.get_source_metadata(source_url, username=username, password=password, headers=headers)
             service_metadata = source_metadata.get('service', {})
             if service_metadata:
                 source_service_metadata.append(service_metadata)
@@ -2469,12 +2500,17 @@ class ServiceConfiguration(ConfigurationBase):
                         
                         # Extract auth credentials from HTTP configuration
                         http_conf = source_conf.get('http', {})
-                        if 'username' in http_conf and 'password' in http_conf:
-                            auth_configs[url] = {
-                                'username': http_conf['username'],
-                                'password': http_conf['password']
-                            }
-            elif source_name in self.context.caches:
+                        auth_info = {}
+                        
+                        if "username" in http_conf and "password" in http_conf:
+                            auth_info["username"] = http_conf["username"]
+                            auth_info["password"] = http_conf["password"]
+                            
+                        if "headers" in http_conf:
+                            auth_info["headers"] = http_conf["headers"]
+                            
+                        if auth_info:
+                            auth_configs[url] = auth_info
                 # Recursively check nested caches
                 nested_urls, nested_auth_configs = self._get_cache_wms_sources_for_service(source_name)
                 wms_urls.extend(nested_urls)

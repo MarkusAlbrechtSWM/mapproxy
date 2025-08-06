@@ -36,7 +36,7 @@ class WMSMetadataManager(object):
     def __init__(self):
         self._cache = {}
 
-    def get_source_metadata(self, url, version='1.1.1', username=None, password=None):
+    def get_source_metadata(self, url, version='1.1.1', username=None, password=None, headers=None):
         """
         Fetch and parse metadata from a WMS GetCapabilities document.
 
@@ -45,11 +45,12 @@ class WMSMetadataManager(object):
             version: WMS version (default: 1.1.1)
             username: Basic auth username (optional)
             password: Basic auth password (optional)
+            headers: HTTP headers dict (optional)
 
         Returns:
             dict: Parsed metadata dictionary with 'service' and 'layers' keys
         """
-        cache_key = (url, version, username, password)
+        cache_key = (url, version, username, password, str(headers) if headers else None)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -61,11 +62,15 @@ class WMSMetadataManager(object):
             clean_url, (url_username, url_password) = auth_data_from_url(capabilities_url)
             if url_username or url_password:
                 # Use auth data from URL
-                http_client = HTTPClient(clean_url, url_username, url_password)
+                http_client = HTTPClient(clean_url, url_username, url_password, headers=headers)
                 capabilities_response = http_client.open(clean_url)
             elif username or password:
                 # Use provided credentials
-                http_client = HTTPClient(capabilities_url, username, password)
+                http_client = HTTPClient(capabilities_url, username, password, headers=headers)
+                capabilities_response = http_client.open(capabilities_url)
+            elif headers:
+                # Use headers only (like Authorization header)
+                http_client = HTTPClient(capabilities_url, headers=headers)
                 capabilities_response = http_client.open(capabilities_url)
             else:
                 # No authentication
@@ -159,6 +164,14 @@ class WMSMetadataManager(object):
                 layer_metadata['title'] = layer['title']
             if layer.get('abstract'):
                 layer_metadata['abstract'] = layer['abstract']
+            if layer.get('keywords'):
+                layer_metadata['keywords'] = layer['keywords']
+                    
+            # Additional metadata fields
+            if layer.get('attribution'):
+                layer_metadata['attribution'] = layer['attribution']
+            if layer.get('contact'):
+                layer_metadata['contact'] = layer['contact']
                 
             # Only store layer metadata if it has content
             if layer_metadata:
@@ -198,6 +211,12 @@ class WMSMetadataManager(object):
                 [md.get('contact', {}) for md in source_metadatas]
             )
 
+        # Convert keywords to keyword_list format expected by WMS template
+        if 'keywords' in merged:
+            keywords = merged.pop('keywords')
+            if keywords and isinstance(keywords, list):
+                merged['keyword_list'] = [{'keywords': keywords}]
+
         return merged
 
     def get_layer_metadata(self, layer_name, source_urls, layer_config=None, auth_configs=None):
@@ -209,7 +228,7 @@ class WMSMetadataManager(object):
             source_urls: List of WMS source URLs to fetch metadata from
             layer_config: Optional layer configuration dict to merge
             auth_configs: Optional dict mapping source URLs to auth credentials
-                         Format: {url: {'username': 'user', 'password': 'pass'}}
+                         Format: {url: {'username': 'user', 'password': 'pass', 'headers': {...}}}
             
         Returns:
             dict: Merged layer metadata
@@ -227,8 +246,9 @@ class WMSMetadataManager(object):
             auth_config = auth_configs.get(source_url, {})
             username = auth_config.get('username')
             password = auth_config.get('password')
+            headers = auth_config.get('headers')
             
-            source_metadata = self.get_source_metadata(source_url, username=username, password=password)
+            source_metadata = self.get_source_metadata(source_url, username=username, password=password, headers=headers)
             layers_metadata = source_metadata.get('layers', {})
             
             # Try to find matching layer metadata with fallback strategies
@@ -295,6 +315,12 @@ class WMSMetadataManager(object):
         for key, value in layer_config.items():
             if value:  # Only override with non-empty values
                 merged[key] = value
+        
+        # Convert keywords to keyword_list format expected by WMS template
+        if 'keywords' in merged:
+            keywords = merged.pop('keywords')
+            if keywords and isinstance(keywords, list):
+                merged['keyword_list'] = [{'keywords': keywords}]
                 
         return merged
     def _merge_contact_info(self, service_contact, source_contacts):

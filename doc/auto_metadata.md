@@ -102,13 +102,36 @@ layers:
       auto_metadata: true  # Inherits from upstream_wms via cache
 ```
 
+### Layer with Specific WMS Layer
+
+When using source specifications with specific layer names (format `source_name:layer_name`), the metadata will be extracted for the specified layer:
+
+```yaml
+sources:
+  bavaria_wms:
+    type: wms
+    req:
+      url: https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte
+    http:
+      headers:
+        Authorization: Basic MTFGMjg4ODY6NWM5N2NiOQ==
+
+layers:
+  - name: DFK-Color
+    title: "Cadastral Map (Color)"  # Manual title
+    sources: ['bavaria_wms:by_alkis_flurkarte_farbe']  # Extract metadata for 'by_alkis_flurkarte_farbe'
+    md:
+      auto_metadata: true  # Inherits from specific WMS layer
+```
+
 ### Layer Matching Strategies
 
-MapProxy uses the layer name to match with source WMS layers using multiple strategies:
+MapProxy uses multiple strategies to match layer names when extracting metadata:
 
-1. **Exact match**: Layer name matches exactly
-2. **Case-insensitive match**: `Roads` matches `roads`
-3. **Partial match**: `roads` matches `transport:roads` or `roads_primary`
+1. **Source specification**: When using `source_name:layer_name` format, the specified layer name is used
+2. **Exact match**: Layer name matches exactly
+3. **Case-insensitive match**: `Roads` matches `roads`
+4. **Partial match**: `roads` matches `transport:roads` or `roads_primary`
 
 ```yaml
 layers:
@@ -141,10 +164,32 @@ layers:
       auto_metadata: true  # Uses auth credentials to fetch metadata
 ```
 
+**HTTP Headers Authentication (e.g., Authorization header):**
+
+```yaml
+sources:
+  bavaria_wms:
+    type: wms
+    req:
+      url: https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte
+      layers: flurkarte
+    http:
+      headers:
+        Authorization: Basic MTFGMjg4ODY6NWM5N2NiOQ==
+
+layers:
+  - name: cadastre_layer
+    title: "Cadastral Map"
+    sources: [bavaria_wms]
+    md:
+      auto_metadata: true  # Uses Authorization header to fetch metadata
+```
+
 **Authentication methods supported:**
 
 1. **HTTP Basic Auth via configuration**: Use `http.username` and `http.password` in source configuration
-2. **URL-embedded credentials**: `http://username:password@server.com/wms` (credentials extracted automatically)
+2. **HTTP Headers**: Use `http.headers` to include any HTTP headers (e.g., Authorization, API keys)
+3. **URL-embedded credentials**: `http://username:password@server.com/wms` (credentials extracted automatically)
 
 The authentication credentials are automatically used when:
 - Fetching layer metadata for layers with `auto_metadata: true`
@@ -247,7 +292,7 @@ The following metadata fields are automatically inherited from source WMS GetCap
 **Layer-specific fields**:
 - `title` - Layer title
 - `abstract` - Layer description
-- `keywords` - Layer keywords
+- `keywords` - Layer keywords (from KeywordList)
 - `metadata` - Layer metadata URLs
 - `attribution` - Layer attribution information
 

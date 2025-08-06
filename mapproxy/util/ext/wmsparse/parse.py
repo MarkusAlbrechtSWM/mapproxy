@@ -116,6 +116,11 @@ class WMSCapabilities(object):
             name=self.findtext(elem, 'Name'),
         )
 
+        # Parse keywords
+        keywords = self.layer_keywords(elem)
+        if keywords:
+            layer['keywords'] = keywords
+
         layer['srs'] = self.layer_srs(elem, parent_layer)
         layer['res_hint'] = self.layer_res_hint(elem, parent_layer)
         layer['llbbox'] = self.layer_llbbox(elem, parent_layer)
@@ -124,6 +129,20 @@ class WMSCapabilities(object):
         layer['legend'] = self.layer_legend(elem)
 
         return layer
+
+    def layer_keywords(self, elem):
+        """Extract keywords from a layer element."""
+        keywords = []
+        keyword_list_elem = self.find(elem, 'KeywordList')
+        if keyword_list_elem is not None:
+            keyword_elems = self.findall(keyword_list_elem, 'Keyword')
+            for keyword_elem in keyword_elems:
+                keyword_text = keyword_elem.text
+                if keyword_text:
+                    keyword_text = keyword_text.strip()
+                    if keyword_text:
+                        keywords.append(keyword_text)
+        return keywords
 
     def layer_legend(self, elem):
         style_elems = self.findall(elem, 'Style')

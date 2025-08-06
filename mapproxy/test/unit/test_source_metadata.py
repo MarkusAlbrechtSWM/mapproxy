@@ -329,6 +329,95 @@ class TestLayerMetadata:
         
         mock_get_source.assert_called_once_with('http://example.com/wms')
     
+    @patch('mapproxy.source.metadata.WMSMetadataManager.get_source_metadata')
+    def test_get_layer_metadata_with_layer_name_matching(self, mock_get_source):
+        """Test layer metadata retrieval with specific WMS layer name matching."""
+        # Mock source metadata with different layer names
+        mock_get_source.return_value = {
+            'service': {'title': 'Bavaria WMS Service'},
+            'layers': {
+                'by_alkis_flurkarte_farbe': {
+                    'title': 'ALKIS Flurkarte (Farbe)',
+                    'abstract': 'ALKIS Flurkarte in Farbe dargestellt'
+                },
+                'other_layer': {
+                    'title': 'Other Layer',
+                    'abstract': 'Some other layer'
+                }
+            }
+        }
+        
+        # Test with specific layer name 'by_alkis_flurkarte_farbe'
+        result = self.manager.get_layer_metadata(
+            'by_alkis_flurkarte_farbe',  # This should match the WMS layer
+            ['https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte'], 
+            {},
+            {'https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte': {
+                'headers': {'Authorization': 'Basic MTFGMjg4ODY6NWM5N2NiOQ=='}
+            }}
+        )
+        
+        assert result['title'] == 'ALKIS Flurkarte (Farbe)'
+        assert result['abstract'] == 'ALKIS Flurkarte in Farbe dargestellt'
+        
+        mock_get_source.assert_called_once_with(
+            'https://geoservices.bayern.de/pro/wms/alkis/v1/flurkarte',
+            username=None,
+            password=None,
+            headers={'Authorization': 'Basic MTFGMjg4ODY6NWM5N2NiOQ=='}
+        )
+    
+    @patch('mapproxy.source.metadata.wmsparse.parse_capabilities')
+    def test_get_layer_metadata_with_keywords(self, mock_parse):
+        """Test layer metadata extraction including keywords."""
+        # Mock capabilities with keywords
+        mock_capabilities = Mock()
+        mock_capabilities.layers_list.return_value = [
+            {
+                'name': 'test_layer',
+                'title': 'Test Layer',
+                'abstract': 'A test layer with keywords',
+                'keywords': ['geospatial', 'maps', 'testing']
+            }
+        ]
+        mock_parse.return_value = mock_capabilities
+        
+        result = self.manager.get_layer_metadata(
+            'test_layer', 
+            ['http://example.com/wms'], 
+            {}
+        )
+        
+        assert result['title'] == 'Test Layer'
+        assert result['abstract'] == 'A test layer with keywords'
+        assert result['keywords'] == ['geospatial', 'maps', 'testing']
+        
+        mock_parse.assert_called_once()
+    
+    def test_keywords_converted_to_keyword_list_format(self):
+        """Test that keywords are converted to keyword_list format for templates."""
+        # Test layer metadata
+        layer_config = {'title': 'Custom Layer'}
+        source_metadata = [{'keywords': ['geo', 'maps', 'data']}]
+        
+        result = self.manager.merge_layer_metadata(layer_config, source_metadata)
+        
+        assert result['title'] == 'Custom Layer'
+        assert 'keywords' not in result  # Should be converted
+        assert 'keyword_list' in result
+        assert result['keyword_list'] == [{'keywords': ['geo', 'maps', 'data']}]
+        
+        # Test service metadata
+        service_config = {'title': 'Custom Service'}
+        source_metadata = [{'keywords': ['service', 'wms']}]
+        
+        result = self.manager.merge_metadata(service_config, source_metadata)
+        
+        assert result['title'] == 'Custom Service'
+        assert 'keywords' not in result  # Should be converted
+        assert 'keyword_list' in result
+        assert result['keyword_list'] == [{'keywords': ['service', 'wms']}]
+    
     @patch('mapproxy.source.metadata.open_url')
     @patch('mapproxy.source.metadata.wmsparse.parse_capabilities')
     def test_layer_metadata_with_real_structure(self, mock_parse, mock_open):
@@ -476,3 +565,43 @@ class TestLayerMetadata:
         
         # Verify metadata was parsed correctly
         assert metadata['service']['title'] == 'Public WMS Service'
+    
+    @patch('mapproxy.source.metadata.open_url')
+    @patch('mapproxy.source.metadata.HTTPClient')
+    @patch('mapproxy.util.ext.wmsparse.parse_capabilities')
+    def test_headers_only_auth(self, mock_parse, mock_http_client, mock_open_url):
+        """Test that HTTP headers (like Authorization) are correctly used when fetching metadata."""
+        # Setup mock HTTP client
+        mock_client_instance = Mock()
+        mock_response = Mock()
+        mock_response.read.return_value = b'<mock_capabilities/>'
+        mock_client_instance.open.return_value = mock_response
+        mock_http_client.return_value = mock_client_instance
+        
+        # Setup mock WMS capabilities parsing
+        mock_service = Mock()
+        mock_service.metadata.return_value = {
+            'title': 'Headers Auth WMS Service',
+            'abstract': 'A service with header authentication'
+        }
+        mock_service.layers_list.return_value = [
+            {
+                'name': 'auth_layer',
+                'title': 'Authenticated Layer',
+                'abstract': 'A layer requiring header auth'
+            }
+        ]
+        mock_parse.return_value = mock_service
+        
+        # Test with headers only
+        headers = {'Authorization': 'Basic MTFGMjg4ODY6NWM5N2NiOQ=='}
+        metadata = self.manager.get_source_metadata('http://example.com/wms', headers=headers)
+        
+        # Verify HTTPClient was called with headers
+        mock_http_client.assert_called_once_with('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities', headers=headers)
+        mock_client_instance.open.assert_called_once_with('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities')
+        
+        # Verify metadata was parsed correctly
+        assert metadata['service']['title'] == 'Headers Auth WMS Service'
+        assert 'auth_layer' in metadata['layers']
+        assert metadata['layers']['auth_layer']['title'] == 'Authenticated Layer'
