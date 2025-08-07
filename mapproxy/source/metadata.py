@@ -165,7 +165,12 @@ class WMSMetadataManager(object):
             if layer.get('title'):
                 layer_metadata['title'] = layer['title']
             if layer.get('abstract'):
-                layer_metadata['abstract'] = layer['abstract']
+                # Prepend title to abstract if title exists
+                abstract = layer['abstract']
+                if layer.get('title'):
+                    layer_metadata['abstract'] = f"{layer['title']}: {abstract}"
+                else:
+                    layer_metadata['abstract'] = abstract
             if layer.get('keywords'):
                 layer_metadata['keywords'] = layer['keywords']
                     

@@ -252,13 +252,40 @@ class TestLayerMetadata:
         
         assert 'layer1' in layers_metadata
         assert layers_metadata['layer1']['title'] == 'Layer 1 Title'
-        assert layers_metadata['layer1']['abstract'] == 'Layer 1 description'
+        assert layers_metadata['layer1']['abstract'] == 'Layer 1 Title: Layer 1 description'
         
         assert 'layer2' in layers_metadata
         assert layers_metadata['layer2']['title'] == 'Layer 2 Title'
         assert 'abstract' not in layers_metadata['layer2']
         
         assert len(layers_metadata) == 2  # Only layer1 and layer2 should be included
+    
+    def test_extract_layers_metadata_title_prepended_to_abstract(self):
+        """Test that title is prepended to abstract when both exist."""
+        layers_list = [
+            {'name': 'with_both', 'title': 'Test Title', 'abstract': 'Test Description'},
+            {'name': 'abstract_only', 'abstract': 'Only Description'},
+            {'name': 'title_only', 'title': 'Only Title'},
+            {'name': 'empty_title', 'title': '', 'abstract': 'Description with empty title'}
+        ]
+        
+        layers_metadata = self.manager._extract_layers_metadata(layers_list)
+        
+        # Test title prepended to abstract when both exist
+        assert layers_metadata['with_both']['abstract'] == 'Test Title: Test Description'
+        assert layers_metadata['with_both']['title'] == 'Test Title'
+        
+        # Test abstract only (no title prepending)
+        assert layers_metadata['abstract_only']['abstract'] == 'Only Description'
+        assert 'title' not in layers_metadata['abstract_only']
+        
+        # Test title only (no abstract)
+        assert layers_metadata['title_only']['title'] == 'Only Title'
+        assert 'abstract' not in layers_metadata['title_only']
+        
+        # Test empty title (no prepending)
+        assert layers_metadata['empty_title']['abstract'] == 'Description with empty title'
+        assert 'title' not in layers_metadata['empty_title']
     
     def test_find_matching_layer_metadata(self):
         """Test layer matching strategies."""
