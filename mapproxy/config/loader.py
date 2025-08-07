@@ -2029,8 +2029,9 @@ class LayerConfiguration(ConfigurationBase):
                     if 'url' in req_conf:
                         url = req_conf['url']
                         
-                        # Extract auth credentials from HTTP configuration
+                        # Extract auth credentials and version from source configuration
                         http_conf = source_conf.get('http', {})
+                        wms_opts = source_conf.get('wms_opts', {})
                         auth_info = {}
                         
                         if "username" in http_conf and "password" in http_conf:
@@ -2039,6 +2040,14 @@ class LayerConfiguration(ConfigurationBase):
                             
                         if "headers" in http_conf:
                             auth_info["headers"] = http_conf["headers"]
+                            
+                        # Extract WMS version only if explicitly configured
+                        version = wms_opts.get('version')
+                        if not version:
+                            version = req_conf.get('version')
+                        # Only add version to auth_info if it's explicitly configured
+                        if version:
+                            auth_info["version"] = version
                             
                         source_info.append((url, wms_layer_name, auth_info))
                         
@@ -2107,8 +2116,9 @@ class LayerConfiguration(ConfigurationBase):
                         url = req_conf['url']
                         wms_urls.append(url)
                         
-                        # Extract auth credentials from HTTP configuration
+                        # Extract auth credentials and version from source configuration
                         http_conf = source_conf.get('http', {})
+                        wms_opts = source_conf.get('wms_opts', {})
                         auth_info = {}
                         
                         if "username" in http_conf and "password" in http_conf:
@@ -2118,6 +2128,13 @@ class LayerConfiguration(ConfigurationBase):
                         if "headers" in http_conf:
                             auth_info["headers"] = http_conf["headers"]
                             
+                        # Extract WMS version only if explicitly configured
+                        version = wms_opts.get('version')
+                        if not version:
+                            version = req_conf.get('version')
+                        # Only add version to auth_info if it's explicitly configured
+                        if version:
+                            auth_info["version"] = version                            
                         if auth_info:
                             auth_configs[url] = auth_info
             elif source_name in self.context.caches:
@@ -2420,8 +2437,9 @@ class ServiceConfiguration(ConfigurationBase):
                             if url not in source_urls:
                                 source_urls.append(url)
                                 
-                        # Extract auth credentials from HTTP configuration
+                        # Extract auth credentials and version from source configuration
                         http_conf = source_conf.get('http', {})
+                        wms_opts = source_conf.get('wms_opts', {})
                         auth_info = {}
                         
                         if "username" in http_conf and "password" in http_conf:
@@ -2430,6 +2448,15 @@ class ServiceConfiguration(ConfigurationBase):
                             
                         if "headers" in http_conf:
                             auth_info["headers"] = http_conf["headers"]
+                            
+                        # Extract WMS version only if explicitly configured
+                        version = wms_opts.get('version')
+                        if not version:
+                            req_conf = source_conf.get('req', {})
+                            version = req_conf.get('version')
+                        # Only add version to auth_info if it's explicitly configured
+                        if version:
+                            auth_info["version"] = version
                             
                         if auth_info:
                             auth_configs[url] = auth_info
@@ -2447,13 +2474,17 @@ class ServiceConfiguration(ConfigurationBase):
         # Get auto metadata from all sources
         source_service_metadata = []
         for source_url in source_urls:
-            # Get auth credentials for this source URL
+            # Get auth credentials and version for this source URL
             auth_config = auth_configs.get(source_url, {})
             username = auth_config.get('username')
             password = auth_config.get('password')
             headers = auth_config.get('headers')
+            version = auth_config.get('version')  # None if not configured
             
-            source_metadata = metadata_manager.get_source_metadata(source_url, username=username, password=password, headers=headers)
+            source_metadata = metadata_manager.get_source_metadata(
+                source_url, version=version, username=username, 
+                password=password, headers=headers
+            )
             service_metadata = source_metadata.get('service', {})
             if service_metadata:
                 source_service_metadata.append(service_metadata)
@@ -2498,8 +2529,9 @@ class ServiceConfiguration(ConfigurationBase):
                         url = req_conf['url']
                         wms_urls.append(url)
                         
-                        # Extract auth credentials from HTTP configuration
+                        # Extract auth credentials and version from source configuration
                         http_conf = source_conf.get('http', {})
+                        wms_opts = source_conf.get('wms_opts', {})
                         auth_info = {}
                         
                         if "username" in http_conf and "password" in http_conf:
@@ -2508,9 +2540,17 @@ class ServiceConfiguration(ConfigurationBase):
                             
                         if "headers" in http_conf:
                             auth_info["headers"] = http_conf["headers"]
+                        # Extract WMS version only if explicitly configured
+                        version = wms_opts.get('version')
+                        if not version:
+                            version = req_conf.get('version')
+                        # Only add version to auth_info if it's explicitly configured
+                        if version:
+                            auth_info["version"] = version
                             
                         if auth_info:
                             auth_configs[url] = auth_info
+            elif source_name in self.context.caches:
                 # Recursively check nested caches
                 nested_urls, nested_auth_configs = self._get_cache_wms_sources_for_service(source_name)
                 wms_urls.extend(nested_urls)

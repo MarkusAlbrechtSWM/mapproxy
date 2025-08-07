@@ -131,9 +131,12 @@ class TestWMSMetadataManager:
         
         metadata = self.manager.get_source_metadata('http://example.com/wms')
         
-        assert metadata['title'] == 'Source WMS'
-        assert metadata['abstract'] == 'Test source'
-        assert metadata['contact']['email'] == 'test@example.com'
+        # Verify that no version parameter is added to URL when not specified
+        mock_open.assert_called_once_with('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities')
+        
+        assert metadata['service']['title'] == 'Source WMS'
+        assert metadata['service']['abstract'] == 'Test source'
+        assert metadata['service']['contact']['email'] == 'test@example.com'
         
         # Test caching
         metadata2 = self.manager.get_source_metadata('http://example.com/wms')
@@ -468,7 +471,7 @@ class TestLayerMetadata:
     def test_basic_auth_credentials(self, mock_parse, mock_auth_data, mock_http_client, mock_open_url):
         """Test that basic auth credentials are correctly used when fetching metadata."""
         # Setup auth_data_from_url to return clean URL and no embedded auth
-        mock_auth_data.return_value = ('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities', (None, None))
+        mock_auth_data.return_value = ('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities', (None, None))
         
         # Setup mock HTTP client
         mock_client_instance = Mock()
@@ -496,8 +499,8 @@ class TestLayerMetadata:
         metadata = self.manager.get_source_metadata('http://example.com/wms', username='testuser', password='testpass')
         
         # Verify HTTPClient was called with credentials
-        mock_http_client.assert_called_once_with('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities', 'testuser', 'testpass')
-        mock_client_instance.open.assert_called_once_with('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities')
+        mock_http_client.assert_called_once_with('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities', 'testuser', 'testpass')
+        mock_client_instance.open.assert_called_once_with('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities')
         
         # Verify metadata was parsed correctly
         assert metadata['service']['title'] == 'Secure WMS Service'
@@ -511,7 +514,7 @@ class TestLayerMetadata:
     def test_auth_from_url(self, mock_parse, mock_auth_data, mock_http_client, mock_open_url):
         """Test that auth credentials embedded in URL are correctly extracted and used."""
         # Setup auth_data_from_url to return clean URL and extracted auth
-        mock_auth_data.return_value = ('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities', ('urluser', 'urlpass'))
+        mock_auth_data.return_value = ('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities', ('urluser', 'urlpass'))
         
         # Setup mock HTTP client
         mock_client_instance = Mock()
@@ -533,8 +536,8 @@ class TestLayerMetadata:
         metadata = self.manager.get_source_metadata('http://urluser:urlpass@example.com/wms')
         
         # Verify HTTPClient was called with URL-extracted credentials
-        mock_http_client.assert_called_once_with('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities', 'urluser', 'urlpass')
-        mock_client_instance.open.assert_called_once_with('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities')
+        mock_http_client.assert_called_once_with('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities', 'urluser', 'urlpass')
+        mock_client_instance.open.assert_called_once_with('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities')
         
         # Verify metadata was parsed correctly
         assert metadata['service']['title'] == 'URL Auth WMS Service'
@@ -598,10 +601,170 @@ class TestLayerMetadata:
         metadata = self.manager.get_source_metadata('http://example.com/wms', headers=headers)
         
         # Verify HTTPClient was called with headers
-        mock_http_client.assert_called_once_with('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities', headers=headers)
-        mock_client_instance.open.assert_called_once_with('http://example.com/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities')
+        mock_http_client.assert_called_once_with('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities', headers=headers)
+        mock_client_instance.open.assert_called_once_with('http://example.com/wms?SERVICE=WMS&REQUEST=GetCapabilities')
         
         # Verify metadata was parsed correctly
         assert metadata['service']['title'] == 'Headers Auth WMS Service'
         assert 'auth_layer' in metadata['layers']
         assert metadata['layers']['auth_layer']['title'] == 'Authenticated Layer'
+
+    @patch('mapproxy.source.metadata.open_url')
+    @patch('mapproxy.util.ext.wmsparse.parse_capabilities')
+    def test_get_source_metadata_custom_version(self, mock_parse, mock_open):
+        """Test that get_source_metadata respects custom WMS version parameter."""
+        # Mock HTTP response
+        mock_response = Mock()
+        mock_response.read.return_value = b'<mock_capabilities>13 content</mock_capabilities>'
+        mock_open.return_value = mock_response
+        
+        # Mock parsed service
+        mock_service = Mock()
+        mock_service.metadata.return_value = {
+            'title': 'WMS 1.3.0 Service',
+            'abstract': 'A service using WMS version 1.3.0'
+        }
+        mock_service.layers_list.return_value = [
+            {
+                'name': 'version_layer',
+                'title': 'Version Test Layer',
+                'abstract': 'A layer from WMS 1.3.0 service'
+            }
+        ]
+        mock_parse.return_value = mock_service
+        
+        # Test with WMS version 1.3.0
+        metadata = self.manager.get_source_metadata('http://example.com/wms', version='1.3.0')
+        
+        # Verify the correct version was used in the capabilities URL
+        expected_url = 'http://example.com/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetCapabilities'
+        mock_open.assert_called_once_with(expected_url)
+        
+        # Verify metadata was parsed correctly
+        assert metadata['service']['title'] == 'WMS 1.3.0 Service'
+        assert 'version_layer' in metadata['layers']
+        assert metadata['layers']['version_layer']['title'] == 'Version Test Layer'
+
+    @patch('mapproxy.source.metadata.open_url')
+    @patch('mapproxy.util.ext.wmsparse.parse_capabilities')
+    def test_get_source_metadata_version_110(self, mock_parse, mock_open):
+        """Test that get_source_metadata works with WMS version 1.1.0."""
+        # Mock HTTP response
+        mock_response = Mock()
+        mock_response.read.return_value = b'<mock_capabilities>110 content</mock_capabilities>'
+        mock_open.return_value = mock_response
+        
+        # Mock parsed service
+        mock_service = Mock()
+        mock_service.metadata.return_value = {
+            'title': 'WMS 1.1.0 Service',
+            'abstract': 'A service using WMS version 1.1.0'
+        }
+        mock_service.layers_list.return_value = [
+            {
+                'name': 'legacy_layer',
+                'title': 'Legacy Layer',
+                'abstract': 'A layer from WMS 1.1.0 service'
+            }
+        ]
+        mock_parse.return_value = mock_service
+        
+        # Test with WMS version 1.1.0
+        metadata = self.manager.get_source_metadata('http://example.com/wms', version='1.1.0')
+        
+        # Verify the correct version was used in the capabilities URL
+        expected_url = 'http://example.com/wms?SERVICE=WMS&VERSION=1.1.0&REQUEST=GetCapabilities'
+        mock_open.assert_called_once_with(expected_url)
+        
+        # Verify metadata was parsed correctly
+        assert metadata['service']['title'] == 'WMS 1.1.0 Service'
+        assert 'legacy_layer' in metadata['layers']
+        assert metadata['layers']['legacy_layer']['title'] == 'Legacy Layer'
+
+    @patch('mapproxy.source.metadata.WMSMetadataManager.get_source_metadata')
+    def test_get_layer_metadata_version_inheritance(self, mock_get_source_metadata):
+        """Test that get_layer_metadata passes version from auth_configs to get_source_metadata."""
+        # Mock get_source_metadata return value
+        mock_source_metadata = {
+            'service': {
+                'title': 'Mock Service'
+            },
+            'layers': {
+                'test_layer': {
+                    'title': 'Mock Layer',
+                    'abstract': 'Mock layer description'
+                }
+            }
+        }
+        mock_get_source_metadata.return_value = mock_source_metadata
+        
+        # Test with version in auth_configs
+        auth_configs = {
+            'http://example.com/wms': {
+                'username': 'testuser',
+                'password': 'testpass',
+                'version': '1.3.0'
+            }
+        }
+        
+        metadata = self.manager.get_layer_metadata(
+            'test_layer', 
+            ['http://example.com/wms'], 
+            {}, 
+            auth_configs
+        )
+        
+        # Verify get_source_metadata was called with the correct version
+        mock_get_source_metadata.assert_called_once_with(
+            'http://example.com/wms',
+            version='1.3.0',
+            username='testuser',
+            password='testpass',
+            headers=None
+        )
+        
+        # Verify metadata was returned correctly
+        assert metadata['title'] == 'Mock Layer'
+        assert metadata['abstract'] == 'Mock layer description'
+
+    @patch('mapproxy.source.metadata.WMSMetadataManager.get_source_metadata')
+    def test_get_layer_metadata_no_version_specified(self, mock_get_source_metadata):
+        """Test that get_layer_metadata uses no version when not specified in auth_configs."""
+        # Mock get_source_metadata return value
+        mock_source_metadata = {
+            'service': {},
+            'layers': {
+                'test_layer': {
+                    'title': 'No Version Layer'
+                }
+            }
+        }
+        mock_get_source_metadata.return_value = mock_source_metadata
+        
+        # Test without version in auth_configs
+        auth_configs = {
+            'http://example.com/wms': {
+                'username': 'testuser',
+                'password': 'testpass'
+                # Note: no 'version' key
+            }
+        }
+        
+        metadata = self.manager.get_layer_metadata(
+            'test_layer', 
+            ['http://example.com/wms'], 
+            {}, 
+            auth_configs
+        )
+        
+        # Verify get_source_metadata was called with no version (None)
+        mock_get_source_metadata.assert_called_once_with(
+            'http://example.com/wms',
+            version=None,  # Should be None when not configured
+            username='testuser',
+            password='testpass',
+            headers=None
+        )
+        
+        # Verify metadata was returned correctly
+        assert metadata['title'] == 'No Version Layer'

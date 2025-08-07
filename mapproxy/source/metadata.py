@@ -36,13 +36,13 @@ class WMSMetadataManager(object):
     def __init__(self):
         self._cache = {}
 
-    def get_source_metadata(self, url, version='1.1.1', username=None, password=None, headers=None):
+    def get_source_metadata(self, url, version=None, username=None, password=None, headers=None):
         """
         Fetch and parse metadata from a WMS GetCapabilities document.
 
         Args:
             url: WMS base URL
-            version: WMS version (default: 1.1.1)
+            version: WMS version (optional, if None, no version parameter is added to the URL)
             username: Basic auth username (optional)
             password: Basic auth password (optional)
             headers: HTTP headers dict (optional)
@@ -110,7 +110,9 @@ class WMSMetadataManager(object):
         )
 
         base_req.params['service'] = 'WMS'
-        base_req.params['version'] = version
+        # Only add version parameter if version is specified
+        if version is not None:
+            base_req.params['version'] = version
         base_req.params['request'] = 'GetCapabilities'
         return base_req.complete_url
 
@@ -248,7 +250,12 @@ class WMSMetadataManager(object):
             password = auth_config.get('password')
             headers = auth_config.get('headers')
             
-            source_metadata = self.get_source_metadata(source_url, username=username, password=password, headers=headers)
+            # Get WMS version for this source URL (use None if not specified)
+            version = auth_config.get('version')
+            source_metadata = self.get_source_metadata(
+                source_url, version=version, username=username, 
+                password=password, headers=headers
+            )
             layers_metadata = source_metadata.get('layers', {})
             
             # Try to find matching layer metadata with fallback strategies
