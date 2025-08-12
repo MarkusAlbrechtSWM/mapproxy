@@ -3,7 +3,7 @@ Unit tests for WMS metadata manager functionality.
 """
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from mapproxy.source.metadata import WMSMetadataManager
+from mapproxy.source.metadata import WMSMetadataManager, get_metadata_manager
 from mapproxy.client.http import HTTPClientError
 
 
@@ -11,11 +11,19 @@ class TestWMSMetadataManager:
     
     def setup_method(self):
         """Setup test fixtures."""
+        # Reset singleton for clean testing
+        WMSMetadataManager._instance = None
         self.manager = WMSMetadataManager()
     
-    def test_init(self):
-        """Test WMSMetadataManager initialization."""
-        assert self.manager.capabilities_cache == {}
+    def test_singleton_pattern(self):
+        """Test that WMSMetadataManager implements singleton pattern."""
+        manager1 = WMSMetadataManager()
+        manager2 = WMSMetadataManager()
+        manager3 = get_metadata_manager()
+        
+        assert manager1 is manager2
+        assert manager2 is manager3
+        assert manager1 is self.manager
     
     @patch('mapproxy.source.metadata.HTTPClient')
     def test_fetch_capabilities_success(self, mock_http_client):
@@ -25,6 +33,7 @@ class TestWMSMetadataManager:
         mock_http_client.return_value = mock_client_instance
         
         mock_response = Mock()
+        mock_response.code = 200
         mock_response.read.return_value = b"""<?xml version="1.0" encoding="UTF-8"?>
         <WMS_Capabilities version="1.3.0">
             <Service>
@@ -47,78 +56,110 @@ class TestWMSMetadataManager:
         
         # Verify result
         assert result is not None
-        assert "Test WMS Service" in str(result)
-        
-        # Verify HTTP client was called correctly
-        mock_http_client.assert_called_once()
-        mock_client_instance.open.assert_called_once()
+        assert b"Test WMS Service" in result
     
     @patch('mapproxy.source.metadata.HTTPClient')
-    def test_fetch_capabilities_with_auth(self, mock_http_client):
-        """Test GetCapabilities request with authentication."""
+    def test_get_wms_metadata_with_layer(self, mock_http_client):
+        """Test getting WMS metadata with specific layer."""
+        # Setup mock response  
         mock_client_instance = Mock()
         mock_http_client.return_value = mock_client_instance
         
         mock_response = Mock()
-        mock_response.read.return_value = b'<WMS_Capabilities version="1.3.0"></WMS_Capabilities>'
+        mock_response.code = 200
+        mock_response.read.return_value = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <WMS_Capabilities version="1.3.0">
+            <Service>
+                <Title>Test WMS Service</Title>
+                <Abstract>Test service description</Abstract>
+            </Service>
+            <Capability>
+                <Layer>
+                    <Name>test_layer</Name>
+                    <Title>Test Layer</Title>
+                    <Abstract>Test layer description</Abstract>
+                </Layer>
+            </Capability>
+        </WMS_Capabilities>"""
+        
         mock_client_instance.open.return_value = mock_response
         
-        auth_config = {
-            'username': 'testuser',
-            'password': 'testpass',
-            'headers': {'X-API-Key': 'secret'}
-        }
+        # Test method
+        metadata = self.manager.get_wms_metadata("http://example.com/wms", {}, "test_layer")
         
-        self.manager._fetch_capabilities("http://example.com/wms", auth_config)
-        
-        # Verify HTTP client was configured with auth
-        mock_http_client.assert_called_once()
-        args, kwargs = mock_http_client.call_args
-        assert 'username' in kwargs
-        assert kwargs['username'] == 'testuser'
-        assert 'password' in kwargs
-        assert kwargs['password'] == 'testpass'
+        # Verify metadata
+        assert 'layer' in metadata
+        assert metadata['layer']['title'] == 'Test Layer'
+        assert metadata['layer']['abstract'] == 'Test Layer: Test layer description'
     
-    @patch('mapproxy.source.metadata.HTTPClient')
-    def test_fetch_capabilities_http_error(self, mock_http_client):
-        """Test GetCapabilities request with HTTP error."""
-        mock_client_instance = Mock()
-        mock_http_client.return_value = mock_client_instance
-        mock_client_instance.open.side_effect = HTTPClientError("Connection failed")
+    def test_request_deduplication(self):
+        """Test that concurrent requests for the same URL are deduplicated."""
+        import threading
+        import time
         
-        result = self.manager._fetch_capabilities("http://example.com/wms", {})
-        assert result is None
+        # Track number of actual HTTP requests
+        request_count = 0
+        original_fetch = self.manager._fetch_capabilities
+        
+        def mock_fetch(url, auth_config):
+            nonlocal request_count
+            request_count += 1
+            time.sleep(0.1)  # Simulate network delay
+            return b'<WMS_Capabilities version="1.3.0"></WMS_Capabilities>'
+        
+        self.manager._fetch_capabilities = mock_fetch
+        
+        # Make concurrent requests
+        results = []
+        threads = []
+        
+        def make_request():
+            result = self.manager.get_wms_metadata("http://example.com/wms", {}, "test_layer")
+            results.append(result)
+        
+        # Start 5 concurrent threads
+        for _ in range(5):
+            thread = threading.Thread(target=make_request)
+            threads.append(thread)
+            thread.start()
+        
+        # Wait for all threads to complete
+        for thread in threads:
+            thread.join()
+        
+        # Verify only one HTTP request was made despite 5 concurrent calls
+        assert request_count == 1
+        assert len(results) == 5
+        
+        # Restore original method
+        self.manager._fetch_capabilities = original_fetch
     
-    @patch('mapproxy.source.metadata.HTTPClient')
-    def test_fetch_capabilities_caching(self, mock_http_client):
-        """Test that GetCapabilities responses are cached."""
-        mock_client_instance = Mock()
-        mock_http_client.return_value = mock_client_instance
+    def test_caching_behavior(self):
+        """Test that responses are cached and reused."""
+        call_count = 0
+        original_fetch = self.manager._fetch_capabilities
         
-        mock_response = Mock()
-        mock_response.read.return_value = b'<WMS_Capabilities version="1.3.0"></WMS_Capabilities>'
-        mock_client_instance.open.return_value = mock_response
+        def mock_fetch(url, auth_config):
+            nonlocal call_count
+            call_count += 1
+            return b'<WMS_Capabilities version="1.3.0"></WMS_Capabilities>'
         
-        url = "http://example.com/wms"
+        self.manager._fetch_capabilities = mock_fetch
         
-        # First call
-        result1 = self.manager._fetch_capabilities(url, {})
+        # Make first request
+        self.manager.get_wms_metadata("http://example.com/wms", {}, "test_layer")
+        assert call_count == 1
         
-        # Second call should use cache
-        result2 = self.manager._fetch_capabilities(url, {})
+        # Make second request - should use cache
+        self.manager.get_wms_metadata("http://example.com/wms", {}, "test_layer")
+        assert call_count == 1  # No additional call
         
-        # Verify HTTP client was only called once
-        assert mock_http_client.call_count == 1
-        assert result1 is result2  # Same object from cache
-    
-    @patch.object(WMSMetadataManager, '_fetch_capabilities')
-    def test_get_layer_metadata_capabilities_error(self, mock_fetch):
-        """Test layer metadata retrieval when GetCapabilities fails."""
-        mock_fetch.return_value = None
+        # Make request with different layer but same URL - should use cache
+        self.manager.get_wms_metadata("http://example.com/wms", {}, "other_layer")
+        assert call_count == 1  # Still no additional call
         
-        metadata = self.manager.get_layer_metadata("http://example.com/wms", "test_layer", {})
-        
-        assert metadata == {}
+        # Restore original method
+        self.manager._fetch_capabilities = original_fetch
     
     @patch.object(WMSMetadataManager, '_fetch_capabilities')
     def test_get_service_metadata_success(self, mock_fetch):

@@ -2010,10 +2010,10 @@ class LayerConfiguration(ConfigurationBase):
         if not manual_metadata.get('auto_metadata', False):
             return manual_metadata
         
-        # Import metadata manager
-        from mapproxy.source.metadata import WMSMetadataManager, merge_auto_metadata
+        # Import metadata manager and get singleton instance
+        from mapproxy.source.metadata import get_metadata_manager, merge_auto_metadata
         
-        metadata_manager = WMSMetadataManager()
+        metadata_manager = get_metadata_manager()
         auto_metadata = {}
         
         # Find WMS sources in layer sources

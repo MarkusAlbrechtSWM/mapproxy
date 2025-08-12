@@ -19,8 +19,11 @@ Automatic metadata extraction from WMS sources.
 
 import logging
 import time
+import threading
 from io import BytesIO
 from urllib.parse import urlparse, parse_qs
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 from mapproxy.util.ext.wmsparse import parse_capabilities
 from mapproxy.client.http import HTTPClient
@@ -31,13 +34,31 @@ log = logging.getLogger(__name__)
 class WMSMetadataManager:
     """Manager for fetching and processing WMS metadata from GetCapabilities."""
     
+    _instance = None
+    _lock = Lock()
+    
+    def __new__(cls):
+        """Singleton pattern implementation."""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+    
     def __init__(self):
-        self._cache = {}  # Simple memory cache for capabilities documents
+        # Only initialize once
+        if hasattr(self, '_initialized'):
+            return
+        
+        self._cache = {}  # URL -> (timestamp, capabilities)
         self._cache_ttl = 300  # 5 minutes cache TTL
+        self._request_locks = {}  # URL -> Lock for deduplication
+        self._requests_lock = Lock()  # Protect _request_locks dict
+        self._initialized = True
     
     def get_wms_metadata(self, wms_url, auth_config=None, target_layer=None):
         """
-        Fetch WMS metadata from GetCapabilities document.
+        Fetch WMS metadata from GetCapabilities document with request deduplication.
         
         Args:
             wms_url: WMS service URL
@@ -47,33 +68,47 @@ class WMSMetadataManager:
         Returns:
             dict: Metadata dictionary with service and/or layer metadata
         """
-        cache_key = f"{wms_url}|{target_layer}"
+        # Use URL as primary cache key for deduplication
+        cache_key = wms_url
         
         # Check cache first
         if cache_key in self._cache:
-            cached_time, metadata = self._cache[cache_key]
+            cached_time, capabilities = self._cache[cache_key]
             if time.time() - cached_time < self._cache_ttl:
-                log.debug(f"Using cached metadata for {wms_url}")
-                return metadata
+                log.debug(f"Using cached capabilities for {wms_url}")
+                return self._extract_metadata(capabilities, target_layer)
         
-        try:
-            # Fetch GetCapabilities document
-            cap_doc = self._fetch_capabilities(wms_url, auth_config)
+        # Get or create request lock for this URL to prevent duplicate requests
+        with self._requests_lock:
+            if wms_url not in self._request_locks:
+                self._request_locks[wms_url] = Lock()
+            request_lock = self._request_locks[wms_url]
+        
+        # Use the request lock to deduplicate concurrent requests
+        with request_lock:
+            # Check cache again in case another thread fetched it
+            if cache_key in self._cache:
+                cached_time, capabilities = self._cache[cache_key]
+                if time.time() - cached_time < self._cache_ttl:
+                    log.debug(f"Using freshly cached capabilities for {wms_url}")
+                    return self._extract_metadata(capabilities, target_layer)
             
-            # Parse capabilities
-            capabilities = parse_capabilities(BytesIO(cap_doc))
-            
-            # Extract metadata
-            metadata = self._extract_metadata(capabilities, target_layer)
-            
-            # Cache the result
-            self._cache[cache_key] = (time.time(), metadata)
-            
-            return metadata
-            
-        except Exception as e:
-            log.warning(f"Failed to fetch metadata from {wms_url}: {e}")
-            return {}
+            try:
+                # Fetch GetCapabilities document
+                cap_doc = self._fetch_capabilities(wms_url, auth_config)
+                
+                # Parse capabilities
+                capabilities = parse_capabilities(BytesIO(cap_doc))
+                
+                # Cache the capabilities (not the extracted metadata)
+                self._cache[cache_key] = (time.time(), capabilities)
+                
+                # Extract and return metadata
+                return self._extract_metadata(capabilities, target_layer)
+                
+            except Exception as e:
+                log.warning(f"Failed to fetch metadata from {wms_url}: {e}")
+                return {}
     
     def _fetch_capabilities(self, wms_url, auth_config=None):
         """Fetch GetCapabilities document from WMS URL."""
@@ -102,12 +137,9 @@ class WMSMetadataManager:
         password = None
         
         if auth_config:
-            if 'username' in auth_config and 'password' in auth_config:
-                username = auth_config['username']
-                password = auth_config['password']
-            
-            if 'headers' in auth_config:
-                headers.update(auth_config['headers'])
+            username = auth_config.get('username')
+            password = auth_config.get('password')
+            headers.update(auth_config.get('headers', {}))
         
         # Create HTTP client with auth configuration
         http_client = HTTPClient(
@@ -158,7 +190,11 @@ class WMSMetadataManager:
             layer_names = [name.strip() for name in layer_name.split(',')]
             return self._find_multiple_layers_metadata(capabilities, layer_names)
         
-        # Single layer processing (existing logic)
+        # Single layer processing
+        return self._find_single_layer_metadata(layers, layer_name)
+    
+    def _find_single_layer_metadata(self, layers, layer_name):
+        """Find metadata for a single layer using multiple matching strategies."""
         # Try exact match first
         for layer in layers:
             if layer.get('name') == layer_name:
@@ -186,28 +222,7 @@ class WMSMetadataManager:
         
         # Find each layer using the same matching strategies
         for layer_name in layer_names:
-            found_layer = None
-            layer_name_lower = layer_name.lower()
-            
-            # Try exact match first
-            for layer in layers:
-                if layer.get('name') == layer_name:
-                    found_layer = layer
-                    break
-            
-            # Try case-insensitive match if exact match failed
-            if not found_layer:
-                for layer in layers:
-                    if layer.get('name', '').lower() == layer_name_lower:
-                        found_layer = layer
-                        break
-            
-            # Try partial match if case-insensitive failed
-            if not found_layer:
-                for layer in layers:
-                    if layer_name_lower in layer.get('name', '').lower():
-                        found_layer = layer
-                        break
+            found_layer = self._find_layer_by_name(layers, layer_name)
             
             if found_layer:
                 found_layers.append(found_layer)
@@ -223,6 +238,27 @@ class WMSMetadataManager:
         # Combine metadata from all found layers
         return self._combine_layers_metadata(found_layers)
     
+    def _find_layer_by_name(self, layers, layer_name):
+        """Find a single layer by name using multiple matching strategies."""
+        layer_name_lower = layer_name.lower()
+        
+        # Try exact match first
+        for layer in layers:
+            if layer.get('name') == layer_name:
+                return layer
+        
+        # Try case-insensitive match
+        for layer in layers:
+            if layer.get('name', '').lower() == layer_name_lower:
+                return layer
+        
+        # Try partial match (contains)
+        for layer in layers:
+            if layer_name_lower in layer.get('name', '').lower():
+                return layer
+        
+        return None
+    
     def _combine_layers_metadata(self, layers):
         """Combine metadata from multiple layers."""
         if not layers:
@@ -235,12 +271,7 @@ class WMSMetadataManager:
         combined_metadata = {}
         
         # Combine titles
-        titles = []
-        for layer in layers:
-            title = layer.get('title')
-            if title:
-                titles.append(title)
-        
+        titles = [layer.get('title') for layer in layers if layer.get('title')]
         if titles:
             combined_metadata['title'] = ' + '.join(titles)
         
@@ -300,10 +331,18 @@ class WMSMetadataManager:
                 'url': legend.get('url', '')
             }
         
-        # Contact (would need to be extracted from service level)
-        # This could be enhanced to extract layer-specific contact if available
-        
         return metadata
+
+
+# Module-level singleton instance for backwards compatibility and easy access
+_metadata_manager = None
+
+def get_metadata_manager():
+    """Get the singleton WMSMetadataManager instance."""
+    global _metadata_manager
+    if _metadata_manager is None:
+        _metadata_manager = WMSMetadataManager()
+    return _metadata_manager
 
 
 def merge_auto_metadata(manual_metadata, auto_metadata):
