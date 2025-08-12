@@ -274,3 +274,109 @@ class TestWMSMetadataManagerIntegration:
         transport_metadata = self.manager._extract_layer_metadata(capabilities, "transportation")
         assert transport_metadata['title'] == 'Transportation Network'
         assert transport_metadata['attribution'] == 'Department of Transportation'
+    
+    def test_comma_separated_layers_metadata(self):
+        """Test metadata extraction for comma-separated layers."""
+        # Mock capabilities response with multiple layers
+        capabilities_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <WMS_Capabilities version="1.3.0">
+            <Service>
+                <Title>Test Multi-Layer Service</Title>
+                <Abstract>Service with multiple layers</Abstract>
+            </Service>
+            <Capability>
+                <Layer>
+                    <Layer>
+                        <Name>strassennetz</Name>
+                        <Title>Street Network</Title>
+                        <Abstract>Complete street network data</Abstract>
+                    </Layer>
+                    <Layer>
+                        <Name>strassennetz_generalisiert</Name>
+                        <Title>Generalized Street Network</Title>
+                        <Abstract>Simplified street network for overview display</Abstract>
+                    </Layer>
+                    <Layer>
+                        <Name>other_layer</Name>
+                        <Title>Other Layer</Title>
+                        <Abstract>Some other layer</Abstract>
+                    </Layer>
+                </Layer>
+            </Capability>
+        </WMS_Capabilities>"""
+        
+        # Mock parse_capabilities
+        with patch('mapproxy.source.metadata.parse_capabilities') as mock_parse:
+            mock_capabilities = Mock()
+            mock_capabilities.layers_list.return_value = [
+                {
+                    'name': 'strassennetz',
+                    'title': 'Street Network',
+                    'abstract': 'Complete street network data'
+                },
+                {
+                    'name': 'strassennetz_generalisiert', 
+                    'title': 'Generalized Street Network',
+                    'abstract': 'Simplified street network for overview display'
+                },
+                {
+                    'name': 'other_layer',
+                    'title': 'Other Layer',
+                    'abstract': 'Some other layer'
+                }
+            ]
+            mock_parse.return_value = mock_capabilities
+            
+            # Test comma-separated layer names
+            metadata = self.manager._find_layer_metadata(mock_capabilities, "strassennetz,strassennetz_generalisiert")
+            
+            # Verify combined metadata
+            assert metadata['title'] == 'Street Network + Generalized Street Network'
+            assert metadata['abstract'] == 'Street Network: Complete street network data + Generalized Street Network: Simplified street network for overview display'
+    
+    def test_comma_separated_layers_with_missing(self):
+        """Test metadata extraction for comma-separated layers with some missing."""
+        with patch('mapproxy.source.metadata.parse_capabilities') as mock_parse:
+            mock_capabilities = Mock()
+            mock_capabilities.layers_list.return_value = [
+                {
+                    'name': 'strassennetz',
+                    'title': 'Street Network',
+                    'abstract': 'Complete street network data'
+                }
+            ]
+            mock_parse.return_value = mock_capabilities
+            
+            # Test with one existing and one missing layer
+            with patch('mapproxy.source.metadata.log') as mock_log:
+                metadata = self.manager._find_layer_metadata(mock_capabilities, "strassennetz,missing_layer")
+                
+                # Should still return metadata for found layer
+                assert metadata['title'] == 'Street Network'
+                assert metadata['abstract'] == 'Street Network: Complete street network data'
+                
+                # Should log warning about missing layer
+                mock_log.warning.assert_called_with("Layers ['missing_layer'] not found in WMS capabilities")
+    
+    def test_comma_separated_layers_all_missing(self):
+        """Test metadata extraction for comma-separated layers when all are missing."""
+        with patch('mapproxy.source.metadata.parse_capabilities') as mock_parse:
+            mock_capabilities = Mock()
+            mock_capabilities.layers_list.return_value = [
+                {
+                    'name': 'other_layer',
+                    'title': 'Other Layer',
+                    'abstract': 'Some other layer'
+                }
+            ]
+            mock_parse.return_value = mock_capabilities
+            
+            # Test with all missing layers
+            with patch('mapproxy.source.metadata.log') as mock_log:
+                metadata = self.manager._find_layer_metadata(mock_capabilities, "missing1,missing2")
+                
+                # Should return empty metadata
+                assert metadata == {}
+                
+                # Should log warning about missing layers
+                mock_log.warning.assert_called_with("Layers ['missing1', 'missing2'] not found in WMS capabilities")
