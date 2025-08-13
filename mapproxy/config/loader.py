@@ -2042,7 +2042,10 @@ class LayerConfiguration(ConfigurationBase):
                             auto_metadata[key] = value
                             
             except Exception as e:
-                log.warning(f"Failed to fetch auto metadata for source {source_name}: {e}")
+                # Log detailed error but don't block layer creation
+                error_type = type(e).__name__
+                log.warning(f"Failed to fetch auto metadata for source {source_name} ({error_type}): {e}")
+                log.debug(f"Auto metadata fetch failed for {source_name}, layer will work without metadata", exc_info=True)
         
         # Merge auto metadata with manual metadata (manual takes priority)
         return merge_auto_metadata(manual_metadata, auto_metadata)

@@ -107,7 +107,10 @@ class WMSMetadataManager:
                 return self._extract_metadata(capabilities, target_layer)
                 
             except Exception as e:
-                log.warning(f"Failed to fetch metadata from {wms_url}: {e}")
+                # Log detailed error information but don't block MapProxy operation
+                error_type = type(e).__name__
+                log.warning(f"Failed to fetch metadata from {wms_url} ({error_type}): {e}")
+                log.debug(f"Auto metadata fetch failed for {wms_url}, continuing without metadata", exc_info=True)
                 return {}
     
     def _fetch_capabilities(self, wms_url, auth_config=None):
@@ -141,16 +144,19 @@ class WMSMetadataManager:
             password = auth_config.get('password')
             headers.update(auth_config.get('headers', {}))
         
-        # Create HTTP client with auth configuration
+        # Create HTTP client with auth configuration and timeout
+        # Use a shorter timeout for metadata requests to prevent blocking
+        metadata_timeout = 30  # 30 seconds timeout for metadata requests
         http_client = HTTPClient(
             url=cap_url,
             username=username,
             password=password,
-            headers=headers
+            headers=headers,
+            timeout=metadata_timeout
         )
         
         # Fetch the document
-        log.debug(f"Fetching GetCapabilities from {cap_url}")
+        log.debug(f"Fetching GetCapabilities from {cap_url} (timeout: {metadata_timeout}s)")
         response = http_client.open(cap_url)
         
         if response.code != 200:
