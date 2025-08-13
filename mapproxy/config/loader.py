@@ -1894,9 +1894,66 @@ class WMSLayerConfiguration(ConfigurationBase):
         if not layers:
             layer = this_layer
         else:
+            # Process metadata with sublayer aggregation
+            group_md = self._merge_group_auto_metadata(layers, this_layer)
             layer = WMSGroupLayer(name=self.conf.get('name'), title=self.conf.get('title'),
-                                  this=this_layer, layers=layers, md=self.conf.get('md'))
+                                  this=this_layer, layers=layers, md=group_md)
         return layer
+    
+    def _merge_group_auto_metadata(self, sublayers, this_layer):
+        """Merge auto-fetched metadata from sublayers with group configuration."""
+        manual_metadata = self.conf.get('md', {})
+        
+        # Check if auto_metadata is enabled for the group
+        if not manual_metadata.get('auto_metadata', False):
+            return manual_metadata
+        
+        # Collect metadata from sublayers that have auto_metadata enabled
+        sublayer_abstracts = []
+        sublayer_titles = []
+        
+        # Process sublayers
+        for sublayer in sublayers:
+            if hasattr(sublayer, 'md') and sublayer.md:
+                md = sublayer.md
+                
+                # Check if this sublayer had auto_metadata enabled
+                # We can detect this by checking if it has auto-fetched content
+                if md.get('abstract') and md.get('title'):
+                    sublayer_titles.append(md['title'])
+                    sublayer_abstracts.append(md['abstract'])
+                elif md.get('abstract'):
+                    sublayer_abstracts.append(md['abstract'])
+                elif md.get('title'):
+                    sublayer_titles.append(md['title'])
+        
+        # Process this_layer if it exists
+        if this_layer and hasattr(this_layer, 'md') and this_layer.md:
+            md = this_layer.md
+            if md.get('abstract') and md.get('title'):
+                sublayer_titles.append(md['title'])
+                sublayer_abstracts.append(md['abstract'])
+            elif md.get('abstract'):
+                sublayer_abstracts.append(md['abstract'])
+            elif md.get('title'):
+                sublayer_titles.append(md['title'])
+        
+        # Create aggregated metadata
+        aggregated_metadata = manual_metadata.copy()
+        
+        # Combine sublayer metadata if we found any
+        if sublayer_abstracts:
+            if 'abstract' not in manual_metadata or not manual_metadata['abstract']:
+                # Create combined abstract from sublayers
+                combined_abstract = ' + '.join(sublayer_abstracts)
+                aggregated_metadata['abstract'] = combined_abstract
+        
+        if sublayer_titles and ('title' not in manual_metadata or not manual_metadata['title']):
+            # If no manual title, create one from sublayer titles
+            combined_title = ' + '.join(sublayer_titles)
+            aggregated_metadata['title'] = combined_title
+        
+        return aggregated_metadata
 
 
 def cache_source_names(context, cache):
