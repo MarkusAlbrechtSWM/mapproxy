@@ -218,6 +218,43 @@ When a layer has multiple WMS sources, metadata is merged using these rules:
 - **String fields**: First non-empty value is used
 - **Contact information**: Fields are merged, manual config takes priority
 
+Sublayer Aggregation
+~~~~~~~~~~~~~~~~~~~~
+
+For group layers with sublayers, auto metadata can aggregate metadata from sublayers:
+
+.. code-block:: yaml
+
+   layers:
+     - name: LHM-FNP
+       title: LHM-FNP-Root
+       sources: ['source_lhm_plan:plan:g_fnp']
+       md:
+         auto_metadata: true  # Enables sublayer aggregation
+       layers:
+         - name: LHM-FNP-Erklaerungen
+           title: LHM-FNP-Erklärungen
+           sources: ['source_lhm_plan:plan:fnp_aenderung_url_new']
+           md:
+             auto_metadata: true
+         - name: LHM-FNP-PLAN
+           title: LHM-FNP-Plan
+           sources: ['source_lhm_plan:plan:g_fnp']
+           md:
+             auto_metadata: true
+
+**Aggregation behavior:**
+
+- **Group layer abstract**: Combined from all sublayer abstracts using " + " separator
+- **Group layer title**: Combined from all sublayer titles using " + " separator  
+- **Manual configuration**: Always takes priority over aggregated metadata
+- **Empty sublayers**: Sublayers without metadata are skipped in aggregation
+
+**Example result:**
+
+- Title: ``LHM-FNP-Erklärungen + LHM-FNP-Plan``
+- Abstract: ``LHM-FNP-Erklärungen: Explanatory docs + LHM-FNP-Plan: Main planning document``
+
 Error Handling
 --------------
 
