@@ -125,11 +125,11 @@ WEBMERCATOR_EPSG = set(('EPSG:900913', 'EPSG:3857',
 class _SRS_Proj4_API(object):
     # http://trac.openlayers.org/wiki/SphericalMercator
     proj_init = {
-        'EPSG:4326': lambda: Proj('+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +over'),
-        'CRS:84': lambda: Proj('+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +over'),
+        'EPSG:4326': lambda: Proj('+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +over'),  # type: ignore
+        'CRS:84': lambda: Proj('+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +over'),  # type: ignore
     }
     for _epsg in WEBMERCATOR_EPSG:
-        proj_init[_epsg] = lambda: Proj(
+        proj_init[_epsg] = lambda: Proj(  # type: ignore
             '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 '
             '+lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m '
             '+nadgrids=@null +no_defs +over')
@@ -551,6 +551,25 @@ class _SRS(object):
     def __hash__(self):
         return hash(self.srs_code)
 
+    def to_ogc_url(self):
+        """Return a OGC SRS URL like http://www.opengis.net/def/crs/AUTH_NAME/[VERSION]/CODE"""
+        auth_name, code = self.srs_code.split(':')
+        version = 0
+        if auth_name == "OGC":
+            version = "1.3"
+            if code == "84":
+                code = "CRS84"
+        if auth_name.startswith("IAU_"):
+            version = auth_name[4:]
+            auth_name = "IAU"
+        return f"http://www.opengis.net/def/crs/{auth_name}/{version}/{code}"
+
+    def semi_major_meters(self):
+        """Return the semi major axis in meters of the ellipsoid underlying this SRS"""
+        return self.proj.ellipsoid.semi_major_metre
+
+
+_srs_impl: type
 
 if USE_PROJ4_API:
     _srs_impl = _SRS_Proj4_API
@@ -666,3 +685,16 @@ class SupportedSRS(object):
     def __eq__(self, other):
         # .prefered_srs is set global, so we only compare .supported_srs
         return self.supported_srs == other.supported_srs
+
+
+def ogc_crs_url_to_auth_code(url):
+    """Convert a OGC CRS URL (http://www.opengis.net/def/crs/AUTH_NAME/[VERSION]/CODE) into 'AUTH_NAME:CODE'"""
+
+    prefix = "http://www.opengis.net/def/crs/"
+    if not url.startswith(prefix):
+        raise ValueError(f'{url} is not a OGC CRS URL')
+
+    auth_name, version, code = url[len(prefix):].split('/')
+    if auth_name == "IAU":
+        return auth_name + "_" + version + ":" + code
+    return auth_name + ':' + code

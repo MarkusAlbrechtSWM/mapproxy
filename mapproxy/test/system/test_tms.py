@@ -20,7 +20,7 @@ from io import BytesIO
 
 import pytest
 
-from mapproxy.compat.image import Image
+from PIL import Image
 from mapproxy.test.image import is_jpeg, tmp_image
 from mapproxy.test.http import mock_httpd
 from mapproxy.test.system import SysTest
@@ -41,6 +41,8 @@ class TestTMS(SysTest):
         assert "TMS Cache Layer + FI" in resp
         xml = resp.lxml
         assert xml.xpath("count(//TileMap)") == 11
+        assert "Bob Mustermann" in resp
+        assert "keyword1" in resp
 
         # without trailing space
         resp2 = app.get("/tms/1.0.0")

@@ -18,10 +18,12 @@ Retrieve maps/information from WMS servers.
 import sys
 from mapproxy.request.base import split_mime_type
 from mapproxy.cache.legend import Legend, legend_identifier
-from mapproxy.image import make_transparent, ImageSource, SubImageSource, bbox_position_in_image
+from mapproxy.image import make_transparent, ImageSource, sub_image_source, bbox_position_in_image
 from mapproxy.image.merge import concat_legends, concat_json_legends
 from mapproxy.image.transform import ImageTransformer
-from mapproxy.layer import MapExtent, DefaultMapExtent, BlankImage, LegendQuery, MapQuery, MapLayer
+from mapproxy.layer import BlankImage, MapLayer
+from mapproxy.extent import MapExtent, DefaultMapExtent
+from mapproxy.query import MapQuery, LegendQuery
 from mapproxy.source import InfoSource, SourceError, LegendSource
 from mapproxy.client.http import HTTPClientError
 from mapproxy.util.py import reraise_exception
@@ -30,19 +32,13 @@ import logging
 log = logging.getLogger('mapproxy.source.wms')
 
 
-class WMSSource(MapLayer):
-    supports_meta_tiles = True
+class WMSLikeSource(MapLayer):
 
-    def __init__(self, client, image_opts=None, coverage=None, res_range=None,
-                 transparent_color=None, transparent_color_tolerance=None,
-                 supported_srs=None, supported_formats=None, fwd_req_params=None,
-                 error_handler=None):
-        MapLayer.__init__(self, image_opts=image_opts)
-        self.client = client
+    def __init__(self, image_opts=None, coverage=None, res_range=None, transparent_color=None,
+                 transparent_color_tolerance=None, supported_srs=None, supported_formats=None, error_handler=None):
+        super().__init__(image_opts)
         self.supported_srs = supported_srs or []
         self.supported_formats = supported_formats or []
-        self.fwd_req_params = fwd_req_params or set()
-
         self.transparent_color = transparent_color
         self.transparent_color_tolerance = transparent_color_tolerance
         if self.transparent_color:
@@ -54,6 +50,111 @@ class WMSSource(MapLayer):
         else:
             self.extent = DefaultMapExtent()
         self.error_handler = error_handler
+
+    def _retrieve(self, query, format):
+        raise NotImplementedError
+
+    def get_map(self, query):
+        if self.res_range and not self.res_range.contains(query.bbox, query.size,
+                                                          query.srs):
+            raise BlankImage()
+        if self.coverage and not self.coverage.intersects(query.bbox, query.srs):
+            raise BlankImage()
+        try:
+            resp = self._get_map(query)
+            if self.transparent_color:
+                resp = make_transparent(resp, self.transparent_color,
+                                        self.transparent_color_tolerance)
+            resp.opacity = self.opacity
+            return resp
+
+        except HTTPClientError as e:
+            if self.error_handler:
+                resp = self.error_handler.handle(e.response_code, query)
+                if resp:
+                    return resp
+            log.warning('could not retrieve WMS map: %s', e.full_msg or e)
+            raise reraise_exception(SourceError(e.args[0]), sys.exc_info())
+
+    def _get_map(self, query) -> ImageSource:
+        format = self.image_opts.format
+        if not format:
+            format = query.format
+        if self.supported_formats and format not in self.supported_formats:
+            format = self.supported_formats[0]
+        if self.supported_srs:
+            # srs can be equal while still having a different srs_code (EPSG:3857/900913),
+            # make sure to use a supported srs_code
+            request_srs = None
+            for srs in self.supported_srs:
+                if query.srs == srs:
+                    request_srs = srs
+                    break
+            if request_srs is None:
+                return self._get_transformed(query, format)
+            if query.srs.srs_code != request_srs.srs_code:
+                query.srs = request_srs
+        if self.extent and not self.extent.contains(MapExtent(query.bbox, query.srs)):
+            return self._get_sub_query(query, format)
+        resp = self._retrieve(query, format)
+        return ImageSource(resp, size=query.size, image_opts=self.image_opts)
+
+    def _get_sub_query(self, query, format):
+        size, offset, bbox = bbox_position_in_image(query.bbox, query.size, self.extent.bbox_for(query.srs))
+        if size[0] == 0 or size[1] == 0:
+            raise BlankImage()
+        src_query = MapQuery(bbox, size, query.srs, format, dimensions=query.dimensions)
+        resp = self._retrieve(src_query, format)
+        return sub_image_source(resp, size=query.size, offset=offset, image_opts=self.image_opts)
+
+    def _get_transformed(self, query, format) -> ImageSource:
+        dst_srs = query.srs
+        src_srs = self.supported_srs.best_srs(dst_srs)
+        dst_bbox = query.bbox
+        src_bbox = dst_srs.transform_bbox_to(src_srs, dst_bbox)
+
+        src_width, src_height = src_bbox[2]-src_bbox[0], src_bbox[3]-src_bbox[1]
+        ratio = src_width/src_height
+        dst_size = query.size
+        xres, yres = src_width/dst_size[0], src_height/dst_size[1]
+        if xres < yres:
+            src_size = dst_size[0], int(dst_size[0]/ratio + 0.5)
+        else:
+            src_size = int(dst_size[1]*ratio + 0.5), dst_size[1]
+
+        src_query = MapQuery(src_bbox, src_size, src_srs, format, dimensions=query.dimensions)
+
+        if self.coverage and not self.coverage.contains(src_bbox, src_srs):
+            img = self._get_sub_query(src_query, format)
+        else:
+            resp = self._retrieve(src_query, format)
+            img = ImageSource(resp, size=src_size, image_opts=self.image_opts)
+
+        img = ImageTransformer(src_srs, dst_srs).transform(img, src_bbox,
+                                                           query.size, dst_bbox, self.image_opts)
+
+        img.format = format
+        return img
+
+
+class WMSSource(WMSLikeSource):
+    supports_meta_tiles = True
+
+    def __init__(self, client, image_opts=None, coverage=None, res_range=None,
+                 transparent_color=None, transparent_color_tolerance=None,
+                 supported_srs=None, supported_formats=None, fwd_req_params=None,
+                 error_handler=None):
+        WMSLikeSource.__init__(self, image_opts=image_opts, coverage=coverage,
+                               res_range=res_range, transparent_color=transparent_color,
+                               transparent_color_tolerance=transparent_color_tolerance,
+                               supported_srs=supported_srs, supported_formats=supported_formats,
+                               error_handler=error_handler)
+
+        self.client = client
+        self.fwd_req_params = fwd_req_params or set()
+
+    def _retrieve(self, query, format):
+        return self.client.retrieve(query, format)
 
     def is_opaque(self, query):
         """
@@ -78,88 +179,6 @@ class WMSSource(MapLayer):
             return True
 
         return False
-
-    def get_map(self, query):
-        if self.res_range and not self.res_range.contains(query.bbox, query.size,
-                                                          query.srs):
-            raise BlankImage()
-        if self.coverage and not self.coverage.intersects(query.bbox, query.srs):
-            raise BlankImage()
-        try:
-            resp = self._get_map(query)
-            if self.transparent_color:
-                resp = make_transparent(resp, self.transparent_color,
-                                        self.transparent_color_tolerance)
-            resp.opacity = self.opacity
-            return resp
-
-        except HTTPClientError as e:
-            if self.error_handler:
-                resp = self.error_handler.handle(e.response_code, query)
-                if resp:
-                    return resp
-            log.warning('could not retrieve WMS map: %s', e.full_msg or e)
-            reraise_exception(SourceError(e.args[0]), sys.exc_info())
-
-    def _get_map(self, query):
-        format = self.image_opts.format
-        if not format:
-            format = query.format
-        if self.supported_formats and format not in self.supported_formats:
-            format = self.supported_formats[0]
-        if self.supported_srs:
-            # srs can be equal while still having a different srs_code (EPSG:3857/900913),
-            # make sure to use a supported srs_code
-            request_srs = None
-            for srs in self.supported_srs:
-                if query.srs == srs:
-                    request_srs = srs
-                    break
-            if request_srs is None:
-                return self._get_transformed(query, format)
-            if query.srs.srs_code != request_srs.srs_code:
-                query.srs = request_srs
-        if self.extent and not self.extent.contains(MapExtent(query.bbox, query.srs)):
-            return self._get_sub_query(query, format)
-        resp = self.client.retrieve(query, format)
-        return ImageSource(resp, size=query.size, image_opts=self.image_opts)
-
-    def _get_sub_query(self, query, format):
-        size, offset, bbox = bbox_position_in_image(query.bbox, query.size, self.extent.bbox_for(query.srs))
-        if size[0] == 0 or size[1] == 0:
-            raise BlankImage()
-        src_query = MapQuery(bbox, size, query.srs, format, dimensions=query.dimensions)
-        resp = self.client.retrieve(src_query, format)
-        return SubImageSource(resp, size=query.size, offset=offset, image_opts=self.image_opts)
-
-    def _get_transformed(self, query, format):
-        dst_srs = query.srs
-        src_srs = self.supported_srs.best_srs(dst_srs)
-        dst_bbox = query.bbox
-        src_bbox = dst_srs.transform_bbox_to(src_srs, dst_bbox)
-
-        src_width, src_height = src_bbox[2]-src_bbox[0], src_bbox[3]-src_bbox[1]
-        ratio = src_width/src_height
-        dst_size = query.size
-        xres, yres = src_width/dst_size[0], src_height/dst_size[1]
-        if xres < yres:
-            src_size = dst_size[0], int(dst_size[0]/ratio + 0.5)
-        else:
-            src_size = int(dst_size[1]*ratio + 0.5), dst_size[1]
-
-        src_query = MapQuery(src_bbox, src_size, src_srs, format, dimensions=query.dimensions)
-
-        if self.coverage and not self.coverage.contains(src_bbox, src_srs):
-            img = self._get_sub_query(src_query, format)
-        else:
-            resp = self.client.retrieve(src_query, format)
-            img = ImageSource(resp, size=src_size, image_opts=self.image_opts)
-
-        img = ImageTransformer(src_srs, dst_srs).transform(img, src_bbox,
-                                                           query.size, dst_bbox, self.image_opts)
-
-        img.format = format
-        return img
 
     def _is_compatible(self, other, query):
         if not isinstance(other, WMSSource):

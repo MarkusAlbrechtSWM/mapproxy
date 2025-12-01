@@ -6,8 +6,14 @@ on:
     branches:
       - master
   pull_request:
-    branches:
-      - master
+
+permissions:
+  contents: read  #  to fetch code (actions/checkout)
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -68,3 +74,117 @@ jobs:
       run: |
         export LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6:$LD_PRELOAD
         pytest mapproxy
+
+  coverage:
+    runs-on: ubuntu-24.04
+    services:
+      redis-server:
+        image: redis
+        ports:
+          - 6379:6379
+      couchdb:
+        image: couchdb:2
+        ports:
+          - 5984:5984
+      azure-blob:
+        image: mcr.microsoft.com/azure-storage/azurite
+        ports:
+          - 10000:10000
+
+    env:
+      MAPPROXY_TEST_COUCHDB: 'http://localhost:5984'
+      MAPPROXY_TEST_REDIS: '127.0.0.1:6379'
+      MAPPROXY_TEST_AZURE_BLOB: 'http://localhost:10000'
+      # do not load /etc/boto.cfg with Python 3 incompatible plugin
+      # https://github.com/travis-ci/travis-ci/issues/5246#issuecomment-166460882
+      BOTO_CONFIG: '/doesnotexist'
+
+    steps:
+      - name: Install packages
+        run: |
+          sudo apt update
+          sudo apt install proj-bin libgeos-dev libgdal-dev libxslt-dev libxml2-dev build-essential libjpeg-dev zlib1g-dev libfreetype6-dev protobuf-compiler libprotoc-dev -y
+
+      - name: Checkout sources
+        uses: actions/checkout@v5
+
+      - name: Use python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies ⏬
+        run: |
+          pip install .
+          pip install -r requirements-tests.txt
+          pip freeze
+
+      - name: Run tests with coverage 🏗️
+        run: |
+          export LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6:$LD_PRELOAD
+          coverage run -m pytest mapproxy
+
+      - name: Create coverage report
+        run: |
+          coverage report -m --format markdown > coverage-report.md
+
+      - name: Add Coverage PR Comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        if: github.event_name == 'pull_request'
+        with:
+          recreate: true
+          path: coverage-report.md
+
+  doc:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v5
+
+    - name: Install doc dependencies ⏬
+      run: pip install sphinx sphinx-book-theme sphinx-copybutton
+
+    - name: Run documentation build
+      run: sphinx-build doc/ docs -W
+
+  lint:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v5
+
+      - name: Use python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.12
+
+      - name: Install requirements
+        run: |
+          pip install -r requirements-tests.txt
+
+      - name: flake8 Lint
+        run: |
+          flake8
+
+  typechecking:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v5
+
+      - name: Use python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.12
+
+      - name: Install requirements
+        run: |
+          pip install -r requirements-tests.txt
+
+      - name: mypy Static Typechecking
+        run: |
+          mypy mapproxy

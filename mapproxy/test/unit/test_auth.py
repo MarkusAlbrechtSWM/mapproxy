@@ -19,7 +19,8 @@ from mapproxy.exception import RequestError
 from mapproxy.grid.tile_grid import tile_grid
 from mapproxy.image import BlankImageSource
 from mapproxy.image.opts import ImageOptions
-from mapproxy.layer import MapLayer, DefaultMapExtent
+from mapproxy.layer import MapLayer
+from mapproxy.extent import DefaultMapExtent
 from mapproxy.request.base import Request
 from mapproxy.request.tile import tile_request
 from mapproxy.request.wms import wms_request
@@ -40,6 +41,7 @@ class DummyLayer(MapLayer):
         self.name = name
         self.requested = False
         self.queried = False
+        self.nominal_scale = None
 
     def get_map(self, query):
         self.requested = True

@@ -19,6 +19,7 @@ import hashlib
 import sys
 import threading
 
+from mapproxy.cache.tile import Tile
 from mapproxy.image import ImageSource
 from mapproxy.cache import path
 from mapproxy.cache.base import tile_buffer, TileCacheBase
@@ -75,7 +76,7 @@ class S3Cache(TileCacheBase):
             elif e.response['Error']['Code'] == '403':
                 raise S3ConnectionError('Access denied. Check your credentials')
             else:
-                reraise_exception(
+                raise reraise_exception(
                     S3ConnectionError('Unknown error: %s' % e),
                     sys.exc_info(),
                 )
@@ -102,7 +103,7 @@ class S3Cache(TileCacheBase):
         except Exception as e:
             raise S3ConnectionError('Error during connection %s' % e)
 
-    def load_tile_metadata(self, tile, dimensions=None):
+    def load_tile_metadata(self, tile: Tile, dimensions=None):
         if tile.timestamp:
             return
         self.is_cached(tile, dimensions=dimensions)
@@ -113,7 +114,7 @@ class S3Cache(TileCacheBase):
         if 'ContentLength' in response:
             tile.size = response['ContentLength']
 
-    def is_cached(self, tile, dimensions=None):
+    def is_cached(self, tile: Tile, dimensions=None) -> bool:
         if tile.is_missing():
             if self.use_http_get:
                 try:
@@ -136,11 +137,11 @@ class S3Cache(TileCacheBase):
 
         return True
 
-    def load_tiles(self, tiles, with_metadata=True, dimensions=None):
+    def load_tiles(self, tiles: list[Tile], with_metadata=True, dimensions=None) -> bool:
         p = async_.Pool(min(4, len(tiles)))
         return all(p.map(self.load_tile, tiles))
 
-    def load_tile(self, tile, with_metadata=True, dimensions=None):
+    def load_tile(self, tile: Tile, with_metadata=True, dimensions=None) -> bool:
         if not tile.is_missing():
             return True
 

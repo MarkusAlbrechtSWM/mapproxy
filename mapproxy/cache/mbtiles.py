@@ -21,6 +21,7 @@ import time
 from io import BytesIO
 from itertools import groupby
 
+from mapproxy.cache.tile import Tile
 from mapproxy.image import ImageSource
 from mapproxy.cache.base import TileCacheBase, tile_buffer, REMOVE_ON_UNLOCK
 from mapproxy.util.fs import ensure_directory
@@ -32,7 +33,11 @@ log = logging.getLogger(__name__)
 
 if not hasattr(glob, 'escape'):
     import re
-    glob.escape = lambda pathname: re.sub(r'([*?[])', r'[\1]', pathname)
+
+    def escape_str(pathname: str) -> str:
+        return re.sub(r'([*?[])', r'[\1]', pathname)
+
+    glob.escape = escape_str  # type: ignore[assignment]
 
 
 def sqlite_datetime_to_timestamp(datetime):
@@ -190,7 +195,7 @@ class MBTilesCache(TileCacheBase):
             return False
         return True
 
-    def load_tile(self, tile, with_metadata=False, dimensions=None):
+    def load_tile(self, tile: Tile, with_metadata=False, dimensions=None) -> bool:
         if tile.source or tile.coord is None:
             return True
 
@@ -221,7 +226,7 @@ class MBTilesCache(TileCacheBase):
         else:
             return False
 
-    def load_tiles(self, tiles, with_metadata=False, dimensions=None):
+    def load_tiles(self, tiles: list[Tile], with_metadata=False, dimensions=None) -> bool:
         # associate the right tiles with the cursor
         tile_dict = {}
         coords = []
@@ -335,7 +340,7 @@ class MBTilesLevelCache(TileCacheBase):
 
         with self._mbtiles_lock:
             if level not in self._mbtiles:
-                mbtile_filename = os.path.join(self.cache_dir, '%s.mbtile' % level)
+                mbtile_filename = os.path.join(self.cache_dir, '%s.mbtiles' % level)
                 self._mbtiles[level] = MBTilesCache(
                     mbtile_filename,
                     with_timestamps=True,

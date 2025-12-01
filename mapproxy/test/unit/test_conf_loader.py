@@ -25,14 +25,14 @@ import pytest
 
 from mapproxy.config.coverage import load_coverage
 from mapproxy.config.loader import (
-    ProxyConfiguration,
     load_configuration,
     merge_dict,
-    ConfigurationError,
 )
+from mapproxy.config.configuration.base import ConfigurationError
+from mapproxy.config.configuration.proxy import ProxyConfiguration
 from mapproxy.cache.tile import TileManager
 from mapproxy.config.spec import validate_options
-from mapproxy.layer import MapExtent
+from mapproxy.extent import MapExtent
 from mapproxy.seed.spec import validate_seed_conf
 from mapproxy.srs import SRS
 from mapproxy.test.helper import TempFile
@@ -599,7 +599,8 @@ sources:
             else:
                 assert False, 'expected configuration error'
 
-    def test_loading_extra_service(self):
+    @pytest.mark.parametrize("match_schema", [True, False])
+    def test_loading_extra_service(self, caplog, match_schema):
         """ Test registration of extra service """
 
         my_yaml_string = b"""
@@ -620,7 +621,8 @@ sources:
         url: http://foo
         layers: base
 """
-        from mapproxy.config.loader import plugin_services, register_service_configuration
+        from mapproxy.config.configuration.service import register_service_configuration
+        from mapproxy.config.configuration.service import plugin_services
         from mapproxy.service.base import Server
 
         class MyExtraServiceServer(Server):
@@ -637,9 +639,24 @@ sources:
                 with open(tf, 'wb') as f:
                     f.write(my_yaml_string)
 
+                property_name = 'foo' if match_schema else 'invalid'
+                json_schema_extension = {
+                    'type': 'object',
+                    'additionalProperties': False,
+                    'properties': {
+                        property_name: {
+                            'type': 'string'
+                        }
+                    }
+                }
                 register_service_configuration('my_extra_service', my_extra_service_method,
-                                               'my_extra_service', {'foo': str()})
+                                               'my_extra_service', {'foo': str()},
+                                               json_schema_extension)
                 conf = load_configuration(tf, ignore_warnings=False)
+                if match_schema:
+                    assert caplog.text == ""
+                else:
+                    assert "Additional properties are not allowed ('foo' was unexpected)" in caplog.text
                 services = conf.configured_services()
             assert 'my_extra_service' in services[0].names
 
@@ -663,8 +680,9 @@ sources:
     type: my_extra_source
     foo: bar
 """
-        from mapproxy.config.loader import source_configuration_types, register_source_configuration
-        from mapproxy.config.loader import SourceConfiguration
+        from mapproxy.config.configuration.source import register_source_configuration
+        from mapproxy.config.configuration.source import source_configuration_types
+        from mapproxy.config.configuration.source import SourceConfiguration
 
         class my_source_configuration(SourceConfiguration):
             source_type = ('my_extra_source',)
@@ -779,6 +797,9 @@ grids:
     # ======= overwritten bbox:
     bbox: [-180, 60, -100, 70]
 
+  grid_custom:
+    res: [4,2,1]
+
 globals:
   http:
     client_timeout: 2
@@ -833,6 +854,9 @@ grids:
     bbox: [-167, 53, -141, 67]
     bbox_srs: 'EPSG:4326'
 
+  grid_custom:
+    res: [4,2,1]
+
 globals:
   http:
     client_timeout: 3
@@ -882,6 +906,10 @@ base: [%s]
                     assert grid_alaska.conf['srs'] == 'EPSG:4326'
                     assert grid_alaska.conf['bbox_srs'] == 'EPSG:4326'
                     assert grid_alaska.conf['origin'] == 'sw'
+
+                    grid_custom = config.grids['grid_custom']
+                    assert grid_custom is not None
+                    assert grid_custom.conf['res'] == [4, 2, 1]
 
                     wms = config.services.conf['wms']
                     assert wms is not None

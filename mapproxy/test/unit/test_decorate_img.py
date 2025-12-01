@@ -15,12 +15,13 @@
 
 from collections import OrderedDict
 
-from mapproxy.compat.image import Image
+from PIL import Image
 from mapproxy.grid.tile_grid import tile_grid
 from mapproxy.image import BlankImageSource
 from mapproxy.image import ImageSource
 from mapproxy.image.opts import ImageOptions
-from mapproxy.layer import MapLayer, DefaultMapExtent
+from mapproxy.layer import MapLayer
+from mapproxy.extent import DefaultMapExtent
 from mapproxy.service.base import Server
 from mapproxy.service.tile import TileServer
 from mapproxy.service.wms import WMSGroupLayer, WMSServer
@@ -39,6 +40,7 @@ class DummyLayer(MapLayer):
         self.name = name
         self.requested = False
         self.queried = False
+        self.nominal_scale = None
 
     def get_map(self, query):
         self.requested = True

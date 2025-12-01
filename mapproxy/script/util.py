@@ -32,6 +32,7 @@ from mapproxy.script.export import export_command
 from mapproxy.script.grids import grids_command
 from mapproxy.script.scales import scales_command
 from mapproxy.script.wms_capabilities import wms_capabilities_command
+from mapproxy.script.gridconf_from_ogcapitilematrixset import gridconf_from_ogcapitilematrixset_command
 from mapproxy.version import version
 
 
@@ -83,7 +84,7 @@ def serve_develop_command(args):
     else:
         setup_logging()
     from mapproxy.wsgiapp import make_wsgi_app
-    from mapproxy.config.loader import ConfigurationError
+    from mapproxy.config.configuration.base import ConfigurationError
     from mapproxy.util.ext.serving import run_simple
     try:
         app = make_wsgi_app(mapproxy_conf, debug=options.debug)
@@ -175,7 +176,7 @@ def create_command(args):
 
 
 class CreateCommand(object):
-    templates = {
+    templates: dict[str, dict[str, dict]] = {
         'base-config': {},
         'wsgi-app': {},
         'log-ini': {},
@@ -324,7 +325,11 @@ commands = {
     'defrag-compact-cache': {
         'func': defrag_command,
         'help': 'De-fragmentate compact caches.'
-    }
+    },
+    'gridconf-from-ogcapitilematrixset': {
+        'func': gridconf_from_ogcapitilematrixset_command,
+        'help': 'Export OGC API TileMatrixSet as MapProxy grid configuration.'
+    },
 }
 
 

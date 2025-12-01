@@ -15,7 +15,8 @@
 
 from __future__ import division
 
-from mapproxy.compat.image import Image, transform_uses_center
+from PIL import Image
+
 from mapproxy.image import ImageSource, image_filter
 from mapproxy.srs import make_lin_transf
 from mapproxy.util.bbox import bbox_equals
@@ -91,7 +92,7 @@ class ImageTransformer(object):
         result.cacheable = src_img.cacheable
         return result
 
-    def _transform_simple(self, src_img, src_bbox, dst_size, dst_bbox, image_opts):
+    def _transform_simple(self, src_img, src_bbox, dst_size, dst_bbox, image_opts) -> ImageSource:
         """
         Do a simple crop/extent transformation.
         """
@@ -118,22 +119,17 @@ class ImageTransformer(object):
                                               minx+dst_size[0], miny+dst_size[1]))
         else:
             img = img_for_resampling(src_img.as_image(), image_opts.resampling)
-            result = img.transform(dst_size, Image.EXTENT,
+            # Pillow==8
+            method = Image.EXTENT  # type: ignore[attr-defined]
+            result = img.transform(dst_size, method,
                                    (minx, miny, maxx, maxy),
                                    image_filter[image_opts.resampling])
         return ImageSource(result, size=dst_size, image_opts=image_opts)
 
-    def _transform(self, src_img, src_bbox, dst_size, dst_bbox, image_opts):
+    def _transform(self, src_img, src_bbox, dst_size, dst_bbox, image_opts) -> ImageSource:
         """
         Do a 'real' transformation with a transformed mesh (see above).
         """
-
-        # more recent versions of Pillow use center coordinates for
-        # transformations, we manually need to add half a pixel otherwise
-        if transform_uses_center():
-            use_center_px = False
-        else:
-            use_center_px = True
 
         meshes = transform_meshes(
             src_size=src_img.size,
@@ -143,11 +139,13 @@ class ImageTransformer(object):
             dst_bbox=dst_bbox,
             dst_srs=self.dst_srs,
             max_px_err=self.max_px_err,
-            use_center_px=use_center_px,
+            use_center_px=False,
         )
 
         img = img_for_resampling(src_img.as_image(), image_opts.resampling)
-        result = img.transform(dst_size, Image.MESH, meshes,
+        # Pillow==8
+        method = Image.MESH  # type: ignore[attr-defined]
+        result = img.transform(dst_size, method, meshes,
                                image_filter[image_opts.resampling])
 
         if False:
@@ -297,12 +295,14 @@ def center_quad_transform(quad, src_quad):
     )
 
 
-def img_for_resampling(img, resampling):
+def img_for_resampling(img, resampling) -> Image.Image:
     """
     Convert P images to RGB(A) for non-NEAREST resamplings.
     """
     resampling = image_filter[resampling]
-    if img.mode == 'P' and resampling != Image.NEAREST:
+    # Pillow==8
+    nearest = Image.NEAREST  # type: ignore[attr-defined]
+    if img.mode == 'P' and resampling != nearest:
         img.load()  # load to get actual palette mode
         if img.palette is not None:
             # palette can still be None for cropped images

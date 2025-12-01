@@ -22,7 +22,8 @@ from mapproxy.image.opts import ImageOptions
 from mapproxy.source import SourceError
 from mapproxy.client.http import HTTPClientError
 from mapproxy.source import InvalidSourceQuery
-from mapproxy.layer import BlankImage, map_extent_from_grid, CacheMapLayer, MapLayer
+from mapproxy.layer import BlankImage, CacheMapLayer, MapLayer
+from mapproxy.extent import map_extent_from_grid
 from mapproxy.util.py import reraise_exception
 
 import logging
@@ -79,8 +80,8 @@ class TiledSource(MapLayer):
                 resp = self.error_handler.handle(e.response_code, query)
                 if resp:
                     return resp
-            log.warning('could not retrieve tile: %s', e)
-            reraise_exception(SourceError(e.args[0]), sys.exc_info())
+            log.warning('could not retrieve tile (client: %s): %s', self.client, e, exc_info=True)
+            raise reraise_exception(SourceError(e.args[0]), sys.exc_info())
 
 
 class CacheSource(CacheMapLayer):

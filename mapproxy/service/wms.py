@@ -16,11 +16,12 @@
 """
 WMS service handler
 """
-from functools import partial
+from abc import ABC, abstractmethod
 from html import escape
 from itertools import chain
 from math import sqrt
 from collections import OrderedDict
+from typing import Any
 
 from mapproxy.cache.tile import CacheInfo
 from mapproxy.featureinfo import combine_docs
@@ -31,19 +32,19 @@ from mapproxy.service.base import Server
 from mapproxy.response import Response
 from mapproxy.source import SourceError
 from mapproxy.exception import RequestError
-from mapproxy.image import bbox_position_in_image, SubImageSource, BlankImageSource, GeoReference
+from mapproxy.image import bbox_position_in_image, sub_image_source, BlankImageSource, GeoReference
 from mapproxy.image.merge import concat_legends, LayerMerger
 from mapproxy.image.opts import ImageOptions
 from mapproxy.image.message import attribution_image, message_image
-from mapproxy.layer import BlankImage, MapQuery, InfoQuery, LegendQuery, MapError, LimitedLayer
-from mapproxy.layer import MapBBOXError, merge_layer_extents, merge_layer_res_ranges
+from mapproxy.layer import BlankImage, MapError, LimitedLayer, MapBBOXError, merge_layer_res_ranges
+from mapproxy.query import MapQuery, InfoQuery, LegendQuery
 from mapproxy.util import async_
 from mapproxy.util.bbox import TransformationError
 from mapproxy.util.py import cached_property, reraise
 from mapproxy.util.coverage import load_limited_to
 from mapproxy.template import template_loader, bunch, recursive_bunch
 from mapproxy.service import template_helper
-from mapproxy.layer import DefaultMapExtent, MapExtent
+from mapproxy.extent import MapExtent, DefaultMapExtent, merge_layer_extents
 
 get_template = template_loader(__package__, 'templates', namespace=template_helper.__dict__)
 
@@ -56,8 +57,7 @@ class WMSServer(Server):
     service = 'wms'
     fi_transformers = None
 
-    def __init__(self, root_layer, md, srs, image_formats,
-                 request_parser=None, tile_layers=None, attribution=None,
+    def __init__(self, root_layer, md, srs, image_formats, tile_layers=None, attribution=None,
                  info_types=None, strict=False, on_error='raise',
                  concurrent_layer_renderer=1, max_output_pixels=None,
                  srs_extents=None, max_tile_age=None,
@@ -65,7 +65,7 @@ class WMSServer(Server):
                  inspire_md=None,
                  ):
         Server.__init__(self)
-        self.request_parser = request_parser or partial(wms_request, strict=strict, versions=versions)
+        self.versions = versions
         self.root_layer = root_layer
         self.layers = root_layer.child_layers()
         self.tile_layers = tile_layers or {}
@@ -81,6 +81,9 @@ class WMSServer(Server):
         self.max_output_pixels = max_output_pixels
         self.max_tile_age = max_tile_age
         self.inspire_md = inspire_md
+
+    def parse_request(self, req):
+        return wms_request(req, strict=self.strict, versions=self.versions)
 
     def map(self, map_request):
         self.check_map_request(map_request)
@@ -148,7 +151,7 @@ class WMSServer(Server):
                               bbox=query.bbox, bbox_srs=params.srs, coverage=coverage)
 
         if query != orig_query:
-            result = SubImageSource(result, size=orig_query.size, offset=offset, image_opts=img_opts)
+            result = sub_image_source(result, size=orig_query.size, offset=offset, image_opts=img_opts)
 
         # Provide the wrapping WSGI app or filter the opportunity to process the
         # image before it's wrapped up in a response
@@ -558,7 +561,7 @@ class Capabilities(object):
             layer_llbbox=self.layer_llbbox,
             inspire_md=inspire_md,
             max_output_size=max_output_size,
-            escape=escape
+            escape=escape,
         )
         # strip blank lines
         doc = '\n'.join(x for x in doc.split('\n') if x.rstrip())
@@ -620,7 +623,7 @@ class LayerRenderer(object):
                 else:
                     ex = layer_task.exception
                     async_pool.shutdown(True)
-                    reraise(ex)
+                    raise reraise(ex)
         except SourceError as ex:
             raise RequestError(ex.args[0], request=self.request)
 
@@ -643,7 +646,7 @@ class LayerRenderer(object):
                     errors.append(ex[1].args[0])
                 else:
                     async_pool.shutdown(True)
-                    reraise(ex)
+                    raise reraise(ex)
 
         if render_layers and not rendered:
             errors = '\n'.join(errors)
@@ -673,7 +676,7 @@ class LayerRenderer(object):
             return layer, None
 
 
-class WMSLayerBase(object):
+class WMSLayerBase(ABC):
     """
     Base class for WMS layer (layer groups and leaf layers).
     """
@@ -682,10 +685,10 @@ class WMSLayerBase(object):
     is_active = True
 
     "list of sublayers"
-    layers = []
+    layers: list['WMSLayerBase'] = []
 
     "metadata dictionary with tile, name, etc."
-    md = {}
+    md: dict[str, Any] = {}
 
     "True if .info() is supported"
     queryable = False
@@ -698,7 +701,17 @@ class WMSLayerBase(object):
     "resolution range (i.e. ScaleHint) of the layer"
     res_range = None
     "MapExtend of the layer"
-    extent = None
+    extent: MapExtent
+    name: str
+    title: str
+
+    @abstractmethod
+    def is_opaque(self, query):
+        pass
+
+    @abstractmethod
+    def renders_query(self, query):
+        pass
 
     def map_layers_for_query(self, query):
         raise NotImplementedError()
@@ -716,11 +729,13 @@ class WMSLayer(WMSLayerBase):
 
     Combines map, info and legend sources with metadata.
     """
+
     is_active = True
     layers = []
 
     def __init__(self, name, title, map_layers, info_layers=None, legend_layers=None,
-                 res_range=None, md=None, dimensions=None):
+                 res_range=None, md=None, dimensions=None,
+                 nominal_scale=None):
         self.name = name
         self.title = title
         self.md = md or {}
@@ -729,13 +744,13 @@ class WMSLayer(WMSLayerBase):
         self.legend_layers = legend_layers or []
         self.extent = merge_layer_extents(map_layers)
         self.dimensions = dimensions
-
         if res_range is None:
             res_range = merge_layer_res_ranges(map_layers)
         self.res_range = res_range
         self.queryable = True if info_layers else False
         self.has_legend = True if legend_layers else False
         self.dimensions = dimensions
+        self.nominal_scale = nominal_scale
 
     def is_opaque(self, query):
         return any(x.is_opaque(query) for x in self.map_layers)
@@ -792,7 +807,7 @@ class WMSGroupLayer(WMSLayerBase):
     that represents this layer.
     """
 
-    def __init__(self, name, title, this, layers, md=None):
+    def __init__(self, name, title, this, layers: list[WMSLayerBase], md=None):
         self.name = name
         self.title = title
         self.this = this
@@ -804,6 +819,7 @@ class WMSGroupLayer(WMSLayerBase):
         all_layers = layers + ([self.this] if self.this else [])
         self.extent = merge_layer_extents(all_layers)
         self.res_range = merge_layer_res_ranges(all_layers)
+        self.nominal_scale = max([layer.nominal_scale if layer.nominal_scale else 0 for layer in all_layers])
 
     def is_opaque(self, query):
         return any(x.is_opaque(query) for x in self.layers)

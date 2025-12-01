@@ -26,7 +26,7 @@ import pytest
 
 from mapproxy.image import ImageSource
 from mapproxy.srs import SRS
-from mapproxy.compat.image import Image
+from PIL import Image
 from mapproxy.request.wms import (
     WMS100MapRequest,
     WMS111MapRequest,
@@ -753,7 +753,7 @@ class TestWMS111(SysTest):
             self.common_fi_req.params["info_format"] = "text/html"
             resp = app.get(self.common_fi_req)
             assert resp.content_type == "text/html"
-            assert resp.body == b"<html><body><p>info</p></body></html>"
+            assert resp.body == b"<html><body>info</body></html>"
             assert resp.headers['Content-Type'] == 'text/html; charset=utf-8'
 
     def test_get_featureinfo_info_format_special_chars(self, app):
@@ -771,7 +771,7 @@ class TestWMS111(SysTest):
             self.common_fi_req.params["info_format"] = "text/html"
             resp = app.get(self.common_fi_req)
             assert resp.content_type == "text/html"
-            assert resp.body == encode(u"<html><body><p>äüß▼</p></body></html>")
+            assert resp.body == encode(u"<html><body>äüß▼</body></html>")
             assert resp.headers['Content-Type'] == 'text/html; charset=utf-8'
 
     def test_get_featureinfo_130(self, app):
@@ -811,11 +811,11 @@ class TestWMS111(SysTest):
             assert resp.headers['Content-Type'] == 'text/plain; charset=utf-8'
 
     def test_get_featureinfo_missing_params_strict(self, app):
-        request_parser = app.app.handlers["service"].services["wms"].request_parser
+        request_parser = app.app.handlers["service"].services["wms"].parse_request
         try:
             app.app.handlers["service"].services[
                 "wms"
-            ].request_parser = functools.partial(wms_request, strict=True)
+            ].parse_request = functools.partial(wms_request, strict=True)
 
             del self.common_fi_req.params["format"]
             del self.common_fi_req.params["styles"]
@@ -824,8 +824,8 @@ class TestWMS111(SysTest):
             assert "missing parameters" in xml.xpath("//ServiceException/text()")[0]
             assert validate_with_dtd(xml, "wms/1.1.1/exception_1_1_1.dtd")
         finally:
-            app.app.handlers["service"].services["wms"].request_parser = request_parser
-            app.app.handlers["service"].request_parser = request_parser
+            app.app.handlers["service"].services["wms"].parse_request = request_parser
+            app.app.handlers["service"].parse_request = request_parser
 
     def test_get_featureinfo_not_queryable(self, app):
         self.common_fi_req.params["query_layers"] = "tms_cache"

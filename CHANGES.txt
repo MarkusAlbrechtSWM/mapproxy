@@ -1,3 +1,82 @@
+6.0.1 2025-10-29
+~~~~~~~~~~~~~~~~
+
+Maintenance:
+
+  - Removed code to be able to start up MapProxy without PIL.
+
+Fixes:
+
+  - Add python-dateutil dependency to avoid errors on startup.
+  - Add ogcapi to config-schema.json to avoid warnings on startup.
+
+
+6.0.0 2025-10-22
+~~~~~~~~~~~~~~~~
+
+Breaking:
+
+  - The extension for mbtiles used in MapProxy was wrong. It used `.mbtile` instead of `.mbtiles`. Existing files in
+    caches have to be renamed! Here is a small script to change all files in a directory recursively:
+    `find . -type f -name "*.mbtile" -exec sh -c 'mv "$1" "${1%.mbtile}.mbtiles"' _ {} \;`
+  - lxml was updated. The new version is much stricter in its inputs and administrators might have to adjust
+    featureinfo services to output valid HTML.
+
+Improvements:
+
+  - New source types `ogcapitiles` and `ogcapimaps` are now available! See docs for further information.
+  - New util `gridconf-from-ogcapitilematrixset` to fetch grids from an OGC API compliant web service was added.
+    See docs for further information.
+  - MapProxy now offers an OGCAPI compliant service for OGC API Maps and OGC API Tiles. Including landing page and
+    preview maps! See docs for further information.
+  - The `SERVICE` parameter for WMS `GetMap` requests is no longer mandatory as according to spec.
+  - Added test pipeline for the documentation.
+  - The GitHub actions now have better fitting permissions, improving the security.
+  - WMTS capabilities now include `OperationsMetadata` for restful mode.
+  - TMS capabilities now include metadata similar to WMS and WMTS.
+
+Maintenance:
+
+  - Some fixes in the documentation.
+  - As shapely is no longer optional, code to check for its existence has been removed.
+
+Fixes:
+
+  - An error regarding unicode strings in the featureinfo parsing was fixed.
+  - An error in the debug logging of configurations was fixed
+
+
+5.1.1 2025-10-01
+~~~~~~~~~~~~~~~~
+
+Improvements:
+
+  - Better logging of http errors if mapproxy requests tiles
+
+Fixes:
+
+  - Fixed logger for merged configuration files
+
+
+5.1.0 2025-09-30
+~~~~~~~~~~~~~~~~
+
+Improvements:
+
+  - Added `query_layers` option to `wms_opts` to be able to configure the `QUERY_LAYERS` of the wms request
+  - Added workflow to republish docker images if the base image changed, i.e. for security updates
+
+Maintenance:
+
+  - Fixed some spelling and debug output
+  - Updated various dependencies
+
+Fixes:
+
+  - Fixes some errors in the json schema regarding `use_direct_level_from` and `use_direct_res_from`
+  - Fixes an error with merging resolutions of grids
+
+
 5.0.0 2025-06-18
 ~~~~~~~~~~~~~~~~
 

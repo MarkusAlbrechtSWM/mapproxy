@@ -12,8 +12,12 @@ install_requires = [
     'Pillow>=10;python_version=="3.11"',
     'Pillow>=10.1;python_version=="3.12"',
     'Pillow>=11;python_version=="3.13"',
-    'lxml>=4',
-    'shapely>=2'
+    'lxml>=6',
+    'shapely>=2',
+    'jinja2',
+    'Babel',  # For jinja2
+    'python-dateutil',  # For jinja2
+    'requests'
 ]
 
 
@@ -41,7 +45,7 @@ def long_description(changelog_releases=10):
 
 setup(
     name='MapProxy',
-    version="5.0.0",
+    version="6.0.1",
     description='An accelerating proxy for tile and web map services',
     long_description=long_description(7),
     long_description_content_type='text/x-rst',

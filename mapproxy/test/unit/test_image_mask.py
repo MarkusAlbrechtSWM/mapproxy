@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from mapproxy.compat.image import Image, ImageDraw
+from PIL import Image, ImageDraw
 from mapproxy.image import ImageSource
 from mapproxy.image.mask import mask_image_source_from_coverage
 from mapproxy.image.merge import LayerMerger
@@ -22,16 +22,7 @@ from mapproxy.srs import SRS
 from mapproxy.test.image import assert_img_colors_eq, create_image
 from mapproxy.util.coverage import load_limited_to
 
-import pytest
-
-try:
-    from shapely.geometry import Polygon
-
-    geom_support = True
-except ImportError:
-    geom_support = False
-
-pytestmark = pytest.mark.skipif(not geom_support, reason="requires shapely")
+from shapely.geometry import Polygon
 
 
 def coverage(geom, srs="EPSG:4326"):
